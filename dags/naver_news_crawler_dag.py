@@ -58,7 +58,7 @@ default_args = {
 
 # DAG 정의
 dag = DAG(
-    'naver_news_crawler',
+    'naver_news_crawler_v3',
     default_args=default_args,
     description='네이버 뉴스스탠드 KBS/MBC/SBS 크롤링 및 AI 요약',
     schedule='0 9,13 * * *',  # 매일 09:00, 13:00 (UTC 기준)
@@ -77,8 +77,28 @@ def run_news_crawler():
         
         # 환경변수 설정 확인
         openai_key = os.getenv('OPENAI_API_KEY')
+        logging.info(f"태스크 실행 시 OPENAI_API_KEY 확인: {openai_key[:10] if openai_key else 'NOT_SET'}...")
+        
         if not openai_key:
-            raise ValueError("OPENAI_API_KEY 환경변수가 설정되지 않았습니다.")
+            # .env 파일에서 직접 읽어서 설정 시도
+            env_path = os.path.join(os.path.dirname(current_dir), '.env')
+            logging.info(f".env 파일 경로 확인: {env_path}")
+            logging.info(f".env 파일 존재 여부: {os.path.exists(env_path)}")
+            
+            if os.path.exists(env_path):
+                with open(env_path, 'r') as f:
+                    content = f.read()
+                    logging.info(f".env 파일 내용 확인: {content[:100]}...")
+                    for line in content.split('\n'):
+                        if line.startswith('OPENAI_API_KEY='):
+                            key_value = line.split('=', 1)[1]
+                            os.environ['OPENAI_API_KEY'] = key_value
+                            openai_key = key_value
+                            logging.info("✅ .env에서 OPENAI_API_KEY 직접 로드 성공")
+                            break
+            
+            if not openai_key:
+                raise ValueError("OPENAI_API_KEY 환경변수가 설정되지 않았습니다.")
         
         logging.info(f"OPENAI_API_KEY 확인됨: {openai_key[:10]}...")
         

@@ -18,6 +18,31 @@ import logging
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
+# .env 파일에서 환경변수 로드
+def load_env_variables():
+    """프로젝트 루트의 .env 파일에서 환경변수 로드"""
+    try:
+        from dotenv import load_dotenv
+        env_path = os.path.join(os.path.dirname(current_dir), '.env')
+        load_dotenv(env_path)
+        logging.info(f"환경변수 로드 완료: {env_path}")
+    except ImportError:
+        logging.warning("python-dotenv 패키지가 없습니다. 환경변수를 직접 설정합니다.")
+        # .env 파일 직접 읽기
+        env_path = os.path.join(os.path.dirname(current_dir), '.env')
+        if os.path.exists(env_path):
+            with open(env_path, 'r') as f:
+                for line in f:
+                    if '=' in line and not line.startswith('#'):
+                        key, value = line.strip().split('=', 1)
+                        os.environ[key] = value
+            logging.info(f"환경변수 직접 로드 완료: {env_path}")
+    except Exception as e:
+        logging.error(f"환경변수 로드 실패: {e}")
+
+# 환경변수 로드 실행
+load_env_variables()
+
 # 기본 DAG 설정
 default_args = {
     'owner': 'news-team',
@@ -44,22 +69,30 @@ dag = DAG(
 def run_news_crawler():
     """뉴스 크롤러 실행 함수"""
     try:
+        # 환경변수 다시 로드 (태스크 실행 시점에서)
+        load_env_variables()
+        
         # 크롤러 스크립트 경로
         crawler_script = os.path.join(os.path.dirname(current_dir), 'func', 'newsstand_crawler.py')
         
         # 환경변수 설정 확인
-        if not os.getenv('OPENAI_API_KEY'):
+        openai_key = os.getenv('OPENAI_API_KEY')
+        if not openai_key:
             raise ValueError("OPENAI_API_KEY 환경변수가 설정되지 않았습니다.")
+        
+        logging.info(f"OPENAI_API_KEY 확인됨: {openai_key[:10]}...")
         
         logging.info(f"뉴스 크롤러 시작: {crawler_script}")
         
-        # Python 스크립트 실행
+        # Python 스크립트 실행 (환경변수 전달)
+        env = os.environ.copy()
         result = subprocess.run(
             [sys.executable, crawler_script],
             capture_output=True,
             text=True,
             timeout=1800,  # 30분 타임아웃
-            cwd=os.path.join(os.path.dirname(current_dir), 'func')
+            cwd=os.path.join(os.path.dirname(current_dir), 'func'),
+            env=env
         )
         
         # 실행 결과 로깅

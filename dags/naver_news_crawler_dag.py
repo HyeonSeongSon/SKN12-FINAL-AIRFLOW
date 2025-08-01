@@ -190,14 +190,12 @@ check_task = PythonOperator(
     task_id='check_result',
     python_callable=check_and_notify,
     dag=dag,
-    provide_context=True
 )
 
 email_task = PythonOperator(
     task_id='send_notification',
     python_callable=send_notification_email,
     dag=dag,
-    provide_context=True,
     trigger_rule='all_done'  # 이전 태스크가 성공/실패 관계없이 실행
 )
 

@@ -45,7 +45,7 @@ def run_news_crawler():
     """뉴스 크롤러 실행 함수"""
     try:
         # 크롤러 스크립트 경로
-        crawler_script = os.path.join(current_dir, 'newsstand_iframe_crawler.py')
+        crawler_script = os.path.join(os.path.dirname(current_dir), 'func', 'newsstand_crawler.py')
         
         # 환경변수 설정 확인
         if not os.getenv('OPENAI_API_KEY'):
@@ -59,7 +59,7 @@ def run_news_crawler():
             capture_output=True,
             text=True,
             timeout=1800,  # 30분 타임아웃
-            cwd=current_dir
+            cwd=os.path.join(os.path.dirname(current_dir), 'func')
         )
         
         # 실행 결과 로깅
@@ -69,7 +69,8 @@ def run_news_crawler():
             
             # 생성된 파일 확인
             import glob
-            json_files = glob.glob(os.path.join(current_dir, 'newsstand_iframe_*.json'))
+            func_dir = os.path.join(os.path.dirname(current_dir), 'func')
+            json_files = glob.glob(os.path.join(func_dir, 'newsstand_*.json'))
             if json_files:
                 latest_file = max(json_files, key=os.path.getctime)
                 logging.info(f"생성된 파일: {latest_file}")
@@ -226,5 +227,5 @@ dag.doc_md = """
 - 이메일 SMTP 설정 필요
 
 ## 산출물
-- `newsstand_iframe_YYYYMMDD_HHMMSS.json`: 크롤링 결과 파일
+- `newsstand_YYYYMMDD_HHMMSS.json`: 크롤링 결과 파일
 """

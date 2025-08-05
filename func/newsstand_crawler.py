@@ -5,6 +5,11 @@
 우분투 환경 대응
 """
 
+# 실시간 출력을 위한 설정
+import sys
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
+
 import requests
 import os
 from dotenv import load_dotenv
@@ -36,15 +41,15 @@ def setup_chrome_driver_ubuntu():
         subprocess.run(['pkill', '-f', 'chrome'], capture_output=True, timeout=5)
         subprocess.run(['pkill', '-f', 'chromedriver'], capture_output=True, timeout=5)
         time.sleep(2)
-        print("🧹 기존 Chrome/ChromeDriver 프로세스 정리 완료")
+        print("🧹 기존 Chrome/ChromeDriver 프로세스 정리 완료", flush=True)
     except:
         pass
     
     try:
         chrome_options = Options()
         
-        # 우분투 환경 최적화 옵션 (충돌 방지 중심)
-        # chrome_options.add_argument('--headless')  # GUI 보기 위해 주석처리
+        # Docker 환경에서는 반드시 headless 모드 필요
+        chrome_options.add_argument('--headless')
         chrome_options.add_argument('--no-sandbox')
         chrome_options.add_argument('--disable-dev-shm-usage')
         chrome_options.add_argument('--disable-gpu')
@@ -87,35 +92,18 @@ def setup_chrome_driver_ubuntu():
         # User Agent 설정
         chrome_options.add_argument('--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
         
-        print(f"🔧 임시 세션 디렉토리: {temp_dir}")
-        print(f"🔧 디버깅 포트: {debug_port}")
+        print(f"🔧 임시 세션 디렉토리: {temp_dir}", flush=True)
+        print(f"🔧 디버깅 포트: {debug_port}", flush=True)
         
-        # Chrome 드라이버 초기화 시도
+        # Chrome 드라이버 초기화 - Docker 환경에서는 시스템 ChromeDriver 사용
         driver = None
         try:
-            # ChromeDriverManager 사용 시도
-            service = Service(ChromeDriverManager().install())
-            driver = webdriver.Chrome(service=service, options=chrome_options)
-            print("✅ ChromeDriverManager로 드라이버 생성 성공")
+            driver = webdriver.Chrome(options=chrome_options)
+            print("✅ Chrome 드라이버 생성 성공", flush=True)
             
         except Exception as e:
-            print(f"❌ ChromeDriverManager 실패: {e}")
-            
-            # 시스템 chromedriver 사용 시도
-            try:
-                driver = webdriver.Chrome(options=chrome_options)
-                print("✅ 시스템 chromedriver 사용 성공")
-            except Exception as e2:
-                print(f"❌ 시스템 chromedriver 실패: {e2}")
-                
-                # 마지막 시도: headless 모드로
-                try:
-                    chrome_options.add_argument('--headless')
-                    driver = webdriver.Chrome(options=chrome_options)
-                    print("✅ Headless 모드로 드라이버 생성 성공")
-                except Exception as e3:
-                    print(f"❌ Headless 모드도 실패: {e3}")
-                    return None
+            print(f"❌ Chrome 드라이버 생성 실패: {e}", flush=True)
+            return None
         
         if driver:
             # 타임아웃 및 기본 설정
@@ -126,13 +114,13 @@ def setup_chrome_driver_ubuntu():
             driver._temp_dir = temp_dir
             driver._debug_port = debug_port
             
-            print("✅ Chrome 드라이버 설정 완료")
+            print("✅ Chrome 드라이버 설정 완료", flush=True)
             return driver
         else:
             return None
                 
     except Exception as e:
-        print(f"❌ Chrome 드라이버 설정 중 전체 오류: {e}")
+        print(f"❌ Chrome 드라이버 설정 중 전체 오류: {e}", flush=True)
         return None
 
 def detect_current_press(driver):
@@ -149,7 +137,7 @@ def detect_current_press(driver):
             if press_img.is_displayed():
                 # alt 속성 확인
                 alt_text = press_img.get_attribute('alt')
-                print(f"🔍 감지된 alt 텍스트: '{alt_text}'")
+                print(f"🔍 감지된 alt 텍스트: '{alt_text}'", flush=True)
                 
                 # 대상 언론사인지 정확히 확인 (부분 문자열이 아닌 정확한 매칭)
                 for press in target_presses:
@@ -158,75 +146,75 @@ def detect_current_press(driver):
                         if alt_text == 'KBS' or alt_text.startswith('KBS ') or alt_text.endswith(' KBS') or ' KBS ' in alt_text:
                             # KBS World는 제외
                             if 'World' not in alt_text and 'world' not in alt_text:
-                                print(f"🎯 현재 언론사: KBS 감지됨 (alt: '{alt_text}')")
+                                print(f"🎯 현재 언론사: KBS 감지됨 (alt: '{alt_text}')", flush=True)
                                 return 'KBS'
                     else:
                         # MBC, SBS는 기존 방식대로
                         if press in alt_text:
-                            print(f"🎯 현재 언론사: {press} 감지됨 (alt: '{alt_text}')")
+                            print(f"🎯 현재 언론사: {press} 감지됨 (alt: '{alt_text}')", flush=True)
                             return press
                 
-                print(f"❌ 대상 언론사가 아님: {alt_text}")
+                print(f"❌ 대상 언론사가 아님: {alt_text}", flush=True)
                 return None
             else:
-                print("❌ 언론사 이미지가 표시되지 않음")
+                print("❌ 언론사 이미지가 표시되지 않음", flush=True)
                 return None
                 
         except NoSuchElementException:
-            print(f"❌ 지정된 xpath에서 이미지를 찾을 수 없음: {press_img_xpath}")
+            print(f"❌ 지정된 xpath에서 이미지를 찾을 수 없음: {press_img_xpath}", flush=True)
             
             # 대체 방법: 일반적인 alt 속성 검색
-            print("🔄 대체 방법으로 언론사 검색 중...")
+            print("🔄 대체 방법으로 언론사 검색 중...", flush=True)
             for press in target_presses:
                 try:
                     if press == 'KBS':
                         # KBS는 정확한 매칭으로 검색
                         press_img = driver.find_element(By.XPATH, f"//img[@alt='KBS']")
                         if press_img.is_displayed():
-                            print(f"🎯 대체 방법으로 KBS 감지됨")
+                            print(f"🎯 대체 방법으로 KBS 감지됨", flush=True)
                             return 'KBS'
                     else:
                         # MBC, SBS는 기존 방식
                         press_img = driver.find_element(By.XPATH, f"//img[@alt='{press}']")
                         if press_img.is_displayed():
-                            print(f"🎯 대체 방법으로 {press} 감지됨")
+                            print(f"🎯 대체 방법으로 {press} 감지됨", flush=True)
                             return press
                 except NoSuchElementException:
                     continue
             
-            print("❌ 대체 방법으로도 언론사를 찾을 수 없음")
+            print("❌ 대체 방법으로도 언론사를 찾을 수 없음", flush=True)
             return None
         
     except Exception as e:
-        print(f"❌ 언론사 감지 중 오류: {e}")
+        print(f"❌ 언론사 감지 중 오류: {e}", flush=True)
         
         # 현재 페이지 상태 디버깅 정보 출력
         try:
-            print(f"📄 현재 URL: {driver.current_url}")
-            print(f"📄 페이지 제목: {driver.title}")
+            print(f"📄 현재 URL: {driver.current_url}", flush=True)
+            print(f"📄 페이지 제목: {driver.title}", flush=True)
             
             # 페이지에 있는 모든 img 태그의 alt 속성 확인
             all_imgs = driver.find_elements(By.TAG_NAME, "img")
-            print(f"📷 페이지 내 총 이미지 수: {len(all_imgs)}")
+            print(f"📷 페이지 내 총 이미지 수: {len(all_imgs)}", flush=True)
             
             for i, img in enumerate(all_imgs[:10]):  # 처음 10개만 확인
                 try:
                     alt = img.get_attribute('alt')
                     src = img.get_attribute('src')
                     if alt:
-                        print(f"  [{i+1}] alt='{alt}', src='{src[:50]}...'")
+                        print(f"  [{i+1}] alt='{alt}', src='{src[:50]}...'", flush=True)
                 except:
                     continue
                     
         except Exception as debug_e:
-            print(f"❌ 디버깅 정보 출력 실패: {debug_e}")
+            print(f"❌ 디버깅 정보 출력 실패: {debug_e}", flush=True)
         
         return None
 
 def extract_news_from_iframe(driver, press_name):
     """iframe 내부에서 뉴스 추출"""
     try:
-        print(f"📰 {press_name} iframe에서 뉴스 추출 중...")
+        print(f"📰 {press_name} iframe에서 뉴스 추출 중...", flush=True)
         
         # iframe 찾기를 위한 다양한 선택자 시도
         iframe_selectors = [
@@ -251,18 +239,18 @@ def extract_news_from_iframe(driver, press_name):
                 
                 # iframe으로 전환
                 driver.switch_to.frame(iframe)
-                print(f"✅ {press_name} iframe 전환 완료 (선택자: {selector})")
+                print(f"✅ {press_name} iframe 전환 완료 (선택자: {selector})", flush=True)
                 iframe_found = True
                 break
                 
             except TimeoutException:
                 continue
             except Exception as e:
-                print(f"❌ iframe 선택자 '{selector}' 오류: {e}")
+                print(f"❌ iframe 선택자 '{selector}' 오류: {e}", flush=True)
                 continue
         
         if not iframe_found:
-            print(f"❌ {press_name} iframe을 찾을 수 없음")
+            print(f"❌ {press_name} iframe을 찾을 수 없음", flush=True)
             return []
             
         # iframe 내부 페이지 로딩 대기
@@ -272,8 +260,8 @@ def extract_news_from_iframe(driver, press_name):
         try:
             current_url = driver.current_url
             page_source_length = len(driver.page_source)
-            print(f"📄 iframe 내부 URL: {current_url}")
-            print(f"📄 iframe 페이지 소스 길이: {page_source_length}")
+            print(f"📄 iframe 내부 URL: {current_url}", flush=True)
+            print(f"📄 iframe 페이지 소스 길이: {page_source_length}", flush=True)
         except:
             pass
         
@@ -297,15 +285,15 @@ def extract_news_from_iframe(driver, press_name):
         
         for selector_index, selector in enumerate(news_selectors):
             try:
-                print(f"  🔍 [{selector_index + 1}/{len(news_selectors)}] '{selector}' 선택자 검색 중...")
+                print(f"  🔍 [{selector_index + 1}/{len(news_selectors)}] '{selector}' 선택자 검색 중...", flush=True)
                 
                 news_links = driver.find_elements(By.XPATH, selector)
                 
                 if not news_links:
-                    print(f"    ❌ 뉴스 링크 없음")
+                    print(f"    ❌ 뉴스 링크 없음", flush=True)
                     continue
                 
-                print(f"    ✅ {len(news_links)}개 링크 발견")
+                print(f"    ✅ {len(news_links)}개 링크 발견", flush=True)
                 
                 for link in news_links[:20]:  # 각 선택자당 최대 20개
                     try:
@@ -333,23 +321,23 @@ def extract_news_from_iframe(driver, press_name):
                         }
                         
                         headlines.append(news_data)
-                        print(f"      [{len(headlines)}] {title[:50]}...")
+                        print(f"      [{len(headlines)}] {title[:50]}...", flush=True)
                             
                     except Exception as e:
                         continue
                     
             except Exception as e:
-                print(f"    ❌ '{selector}' 선택자 오류: {e}")
+                print(f"    ❌ '{selector}' 선택자 오류: {e}", flush=True)
                 continue
         
         # iframe에서 벗어나기
         driver.switch_to.default_content()
-        print(f"✅ {press_name}에서 {len(headlines)}개 뉴스 수집 완료")
+        print(f"✅ {press_name}에서 {len(headlines)}개 뉴스 수집 완료", flush=True)
         
         return headlines
         
     except Exception as e:
-        print(f"❌ {press_name} iframe 뉴스 추출 오류: {e}")
+        print(f"❌ {press_name} iframe 뉴스 추출 오류: {e}", flush=True)
         # iframe에서 벗어나기
         try:
             driver.switch_to.default_content()
@@ -369,7 +357,7 @@ def click_next_button(driver, max_retries=3):
     
     for retry in range(max_retries):
         try:
-            print(f"🔄 다음 버튼 클릭 시도 {retry + 1}/{max_retries}")
+            print(f"🔄 다음 버튼 클릭 시도 {retry + 1}/{max_retries}", flush=True)
             
             # 여러 xpath 시도
             next_button = None
@@ -378,38 +366,38 @@ def click_next_button(driver, max_retries=3):
                     next_button = WebDriverWait(driver, 3).until(
                         EC.element_to_be_clickable((By.XPATH, xpath))
                     )
-                    print(f"✅ 버튼 발견: {xpath}")
+                    print(f"✅ 버튼 발견: {xpath}", flush=True)
                     break
                 except:
                     continue
             
             if next_button is None:
-                print(f"❌ {retry + 1}번째 시도: 다음 버튼을 찾을 수 없음")
+                print(f"❌ {retry + 1}번째 시도: 다음 버튼을 찾을 수 없음", flush=True)
                 continue
             
             # 버튼 클릭 시도 (두 가지 방법)
             try:
                 # 방법 1: JavaScript 클릭
                 driver.execute_script("arguments[0].click();", next_button)
-                time.sleep(2)  # 페이지 전환 대기 (2초)
-                print("✅ JavaScript로 버튼 클릭 성공")
+                time.sleep(3)  # 페이지 전환 대기 (3초)
+                print("✅ JavaScript로 버튼 클릭 성공", flush=True)
                 return True
             except Exception as e1:
-                print(f"❌ JavaScript 클릭 실패: {e1}")
+                print(f"❌ JavaScript 클릭 실패: {e1}", flush=True)
                 try:
                     # 방법 2: 일반 클릭
                     next_button.click()
-                    time.sleep(2)  # 페이지 전환 대기 (2초)
-                    print("✅ 일반 클릭 성공")
+                    time.sleep(3)  # 페이지 전환 대기 (3초)
+                    print("✅ 일반 클릭 성공", flush=True)
                     return True
                 except Exception as e2:
-                    print(f"❌ 일반 클릭도 실패: {e2}")
+                    print(f"❌ 일반 클릭도 실패: {e2}", flush=True)
                     continue
                     
         except Exception as e:
-            print(f"❌ {retry + 1}번째 시도 전체 실패: {e}")
+            print(f"❌ {retry + 1}번째 시도 전체 실패: {e}", flush=True)
             if retry < max_retries - 1:
-                print("🔄 페이지 새로고침 후 재시도...")
+                print("🔄 페이지 새로고침 후 재시도...", flush=True)
                 try:
                     driver.refresh()
                     time.sleep(3)
@@ -417,13 +405,13 @@ def click_next_button(driver, max_retries=3):
                     pass
             continue
     
-    print(f"❌ {max_retries}번 시도 후 버튼 클릭 최종 실패")
+    print(f"❌ {max_retries}번 시도 후 버튼 클릭 최종 실패", flush=True)
     return False
 
 def crawl_newsstand_with_iframe(driver):
     """iframe 기반 뉴스스탠드 크롤링 메인 함수"""
     try:
-        print("📰 네이버 뉴스스탠드 접속 중...")
+        print("📰 네이버 뉴스스탠드 접속 중...", flush=True)
         
         # 페이지 접속 전 대기
         time.sleep(2)
@@ -436,45 +424,62 @@ def crawl_newsstand_with_iframe(driver):
             WebDriverWait(driver, 20).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
-            print("✅ 페이지 로딩 완료")
+            print("✅ 페이지 로딩 완료", flush=True)
         except TimeoutException:
-            print("❌ 페이지 로딩 타임아웃")
+            print("❌ 페이지 로딩 타임아웃", flush=True)
             return []
         
         # 추가 로딩 대기
         time.sleep(5)
         
         # 현재 페이지 상태 확인
-        print(f"📄 현재 페이지 제목: {driver.title}")
-        print(f"📄 현재 URL: {driver.current_url}")
+        print(f"📄 현재 페이지 제목: {driver.title}", flush=True)
+        print(f"📄 현재 URL: {driver.current_url}", flush=True)
         
         all_headlines = []
         found_presses = []  # KBS/MBC/SBS 수집 완료된 언론사
         all_seen_presses = []  # 모든 본 언론사 기록 (중복 감지용)
-        max_attempts = 100  # 최대 100번 시도 (주요 언론사 52개 + 여유분)
+        max_attempts = 200  # 최대 200번 시도로 증가
+        cycles_completed = 0  # 완료된 순환 횟수
+        first_press_in_cycle = None  # 각 사이클의 첫 언론사
         
         for attempt in range(max_attempts):
-            print(f"\n🔄 {attempt + 1}번째 시도...")
+            print(f"\n🔄 {attempt + 1}번째 시도...", flush=True)
             
             # 현재 언론사 감지
             current_press = detect_current_press(driver)
             
             if current_press:
-                # 이미 본 언론사인지 확인 (한 바퀴 완료 판단)
-                if current_press in all_seen_presses:
-                    print(f"🔄 이미 확인한 언론사({current_press})가 다시 나타남 - 한 바퀴 완료!")
-                    print(f"📋 총 {len(all_seen_presses)}개 언론사를 확인했습니다: {all_seen_presses}")
-                    break
-                else:
-                    # 새로운 언론사 기록
-                    all_seen_presses.append(current_press)
-                    print(f"📋 새로운 언론사 발견: {current_press} (총 {len(all_seen_presses)}개 확인)")
-                    print(f"📋 확인한 모든 언론사: {all_seen_presses}")
-            
+                # 사이클 시작 감지
+                if cycles_completed == 0 and first_press_in_cycle is None:
+                    first_press_in_cycle = current_press
+                    print(f"🏁 첫 번째 사이클 시작 - 첫 언론사: {first_press_in_cycle}", flush=True)
+                
+                # 이미 본 언론사가 다시 나타났는지 확인 (한 사이클 완료)
+                if cycles_completed > 0 and current_press == first_press_in_cycle:
+                    cycles_completed += 1
+                    print(f"🔄 {cycles_completed}번째 사이클 완료! (다시 {first_press_in_cycle} 등장)", flush=True)
+                    print(f"📋 이번 사이클에서 확인한 언론사: {all_seen_presses[-(len(all_seen_presses) % 52):] if len(all_seen_presses) > 52 else all_seen_presses}", flush=True)
+                    
+                    # 아직 못 찾은 언론사 확인
+                    missing_presses = [p for p in ['KBS', 'MBC', 'SBS'] if p not in found_presses]
+                    if missing_presses:
+                        print(f"⚠️ 아직 못 찾은 언론사: {missing_presses}", flush=True)
+                        print("🔄 다음 사이클 진행...", flush=True)
+                    else:
+                        print("✅ 모든 대상 언론사를 찾았습니다!")
+                        break
+                
+                # 언론사 기록
+                all_seen_presses.append(current_press)
+                if cycles_completed == 0 and len(all_seen_presses) > 0 and current_press == all_seen_presses[0] and len(all_seen_presses) > 1:
+                    cycles_completed = 1
+                    print(f"🔄 첫 번째 사이클 완료 감지!", flush=True)
+                
                 # KBS/MBC/SBS 중 하나이고 아직 수집하지 않았다면 뉴스 수집
                 target_presses = ['KBS', 'MBC', 'SBS']
                 if current_press in target_presses and current_press not in found_presses:
-                    print(f"🎯 대상 언론사 발견: {current_press}")
+                    print(f"🎯 대상 언론사 발견: {current_press}", flush=True)
                     
                     # iframe에서 뉴스 추출
                     news_from_iframe = extract_news_from_iframe(driver, current_press)
@@ -482,49 +487,64 @@ def crawl_newsstand_with_iframe(driver):
                     if news_from_iframe:
                         all_headlines.extend(news_from_iframe)
                         found_presses.append(current_press)
-                        print(f"✅ {current_press} 뉴스 {len(news_from_iframe)}개 수집 완료")
+                        print(f"✅ {current_press} 뉴스 {len(news_from_iframe)}개 수집 완료", flush=True)
+                        print(f"📊 현재까지 수집한 언론사: {found_presses} ({len(found_presses)}/3)", flush=True)
+                    else:
+                        print(f"⚠️ {current_press}에서 뉴스를 추출하지 못했습니다.", flush=True)
                     
                     # 3개 언론사 모두 찾았으면 종료
                     if len(found_presses) >= 3:
-                        print("🎉 KBS, MBC, SBS 모두 찾았습니다!")
+                        print("🎉 KBS, MBC, SBS 모두 찾았습니다!", flush=True)
                         break
                 elif current_press in target_presses:
-                    print(f"⏭️ {current_press}는 이미 수집했습니다.")
+                    print(f"⏭️ {current_press}는 이미 수집했습니다.", flush=True)
                 else:
-                    print(f"⏭️ {current_press}는 대상 언론사가 아닙니다.")
+                    print(f"⏭️ {current_press}는 대상 언론사가 아닙니다.", flush=True)
+                
+                # 2사이클 이상 돌았는데도 못 찾았으면 경고
+                if cycles_completed >= 2:
+                    missing = [p for p in ['KBS', 'MBC', 'SBS'] if p not in found_presses]
+                    if missing:
+                        print(f"⚠️ {cycles_completed}번의 사이클 후에도 {missing}를 찾지 못했습니다.", flush=True)
             else:
-                print("⏭️ 언론사를 감지할 수 없습니다.")
+                print("⏭️ 언론사를 감지할 수 없습니다.", flush=True)
             
             # 다음 버튼 클릭 (재시도 포함)
             click_success = click_next_button(driver, max_retries=3)
             if not click_success:
-                print("⚠️ 다음 버튼 클릭 실패, 하지만 탐색 계속...")
+                print("⚠️ 다음 버튼 클릭 실패, 하지만 탐색 계속...", flush=True)
                 # 버튼 클릭에 실패해도 탐색을 계속하기 위해 짧은 대기 후 진행
                 time.sleep(2)
                 # 페이지 새로고침으로 복구 시도
                 try:
-                    print("🔄 페이지 새로고침으로 복구 시도...")
+                    print("🔄 페이지 새로고침으로 복구 시도...", flush=True)
                     driver.refresh()
                     time.sleep(3)
                 except Exception as refresh_e:
-                    print(f"❌ 페이지 새로고침 실패: {refresh_e}")
+                    print(f"❌ 페이지 새로고침 실패: {refresh_e}", flush=True)
                     # 그래도 계속 시도
                     pass
         
-        print(f"\n📊 최종 수집 결과:")
-        print(f"   시도 횟수: {attempt + 1}/{max_attempts}")
-        print(f"   확인한 모든 언론사: {all_seen_presses}")
-        print(f"   수집 완료된 언론사: {found_presses}")
-        print(f"   총 뉴스 수: {len(all_headlines)}개")
+        print(f"\n📊 최종 수집 결과:", flush=True)
+        print(f"   시도 횟수: {attempt + 1}/{max_attempts}", flush=True)
+        print(f"   완료된 사이클 수: {cycles_completed}회", flush=True)
+        print(f"   확인한 고유 언론사 수: {len(set(all_seen_presses))}개", flush=True)
+        print(f"   수집 완료된 언론사: {found_presses} ({len(found_presses)}/3)", flush=True)
+        print(f"   총 뉴스 수: {len(all_headlines)}개", flush=True)
+        
+        # 누락된 언론사 표시
+        missing = [p for p in ['KBS', 'MBC', 'SBS'] if p not in found_presses]
+        if missing:
+            print(f"   ⚠️ 수집하지 못한 언론사: {missing}", flush=True)
         
         for press in ['KBS', 'MBC', 'SBS']:
             press_count = len([n for n in all_headlines if n['press'] == press])
-            print(f"   - {press}: {press_count}개")
+            print(f"   - {press}: {press_count}개", flush=True)
         
         return all_headlines
         
     except Exception as e:
-        print(f"❌ 뉴스스탠드 크롤링 오류: {e}")
+        print(f"❌ 뉴스스탠드 크롤링 오류: {e}", flush=True)
         return []
 
 def crawl_article_content(url):
@@ -575,7 +595,7 @@ def crawl_article_content(url):
         return article_content.strip() if article_content else None
         
     except Exception as e:
-        print(f"    ❌ 본문 추출 오류: {e}")
+        print(f"    ❌ 본문 추출 오류: {e}", flush=True)
         return None
 
 def summarize_with_llm(content, title, press):
@@ -608,7 +628,7 @@ def summarize_with_llm(content, title, press):
         return summary
         
     except Exception as e:
-        print(f"    ❌ LLM 요약 오류: {e}")
+        print(f"    ❌ LLM 요약 오류: {e}", flush=True)
         return None
 
 def save_news_data(news_list, filename=None):
@@ -617,75 +637,83 @@ def save_news_data(news_list, filename=None):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"newsstand_iframe_{timestamp}.json"
     
+    # 절대 경로로 저장 위치 명확히 지정
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    filepath = os.path.join(current_dir, filename)
+    
     try:
-        with open(filename, 'w', encoding='utf-8') as f:
+        with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(news_list, f, ensure_ascii=False, indent=2)
-        print(f"💾 데이터 저장 완료: {filename}")
-        return filename
+        print(f"💾 데이터 저장 완료: {filepath}", flush=True)
+        # 파일 존재 확인
+        if os.path.exists(filepath):
+            print(f"✅ 파일 확인됨: {os.path.getsize(filepath)} bytes", flush=True)
+        return filepath
     except Exception as e:
-        print(f"❌ 파일 저장 오류: {e}")
+        print(f"❌ 파일 저장 오류: {e}", flush=True)
+        print(f"    시도한 경로: {filepath}", flush=True)
         return None
 
 def main():
     """메인 실행 함수"""
-    print("=" * 80)
-    print("📺 네이버 뉴스스탠드 iframe 기반 KBS/MBC/SBS 뉴스 크롤러")
-    print("🐧 우분투 환경 최적화")
-    print("=" * 80)
+    print("=" * 80, flush=True)
+    print("📺 네이버 뉴스스탠드 iframe 기반 KBS/MBC/SBS 뉴스 크롤러", flush=True)
+    print("🐧 우분투 환경 최적화", flush=True)
+    print("=" * 80, flush=True)
     
     # OpenAI API 키 확인
     if not os.getenv('OPENAI_API_KEY'):
-        print("❌ 환경변수에서 OpenAI API 키를 찾을 수 없습니다.")
-        print("📝 .env 파일에 다음 변수를 설정해주세요:")
-        print("   OPENAI_API_KEY=your_openai_api_key")
+        print("❌ 환경변수에서 OpenAI API 키를 찾을 수 없습니다.", flush=True)
+        print("📝 .env 파일에 다음 변수를 설정해주세요:", flush=True)
+        print("   OPENAI_API_KEY=your_openai_api_key", flush=True)
         return
     
     driver = None
     try:
         # 1단계: 브라우저 설정
-        print("\n🚀 1단계: Chrome 브라우저 설정 중...")
+        print("\n🚀 1단계: Chrome 브라우저 설정 중...", flush=True)
         driver = setup_chrome_driver_ubuntu()
         if not driver:
-            print("❌ Chrome 드라이버를 설정할 수 없습니다.")
+            print("❌ Chrome 드라이버를 설정할 수 없습니다.", flush=True)
             return
         
         # 2단계: 뉴스스탠드 크롤링
-        print("\n📰 2단계: iframe 기반 뉴스 수집 중...")
+        print("\n📰 2단계: iframe 기반 뉴스 수집 중...", flush=True)
         headlines = crawl_newsstand_with_iframe(driver)
         
         if not headlines:
-            print("❌ 뉴스를 수집할 수 없습니다.")
+            print("❌ 뉴스를 수집할 수 없습니다.", flush=True)
             return
         
-        print(f"✅ 총 {len(headlines)}개의 뉴스를 수집했습니다.")
+        print(f"✅ 총 {len(headlines)}개의 뉴스를 수집했습니다.", flush=True)
         
         # 3단계: 본문 추출 및 요약
-        print(f"\n📝 3단계: 뉴스 본문 추출 및 AI 요약 생성 중...")
+        print(f"\n📝 3단계: 뉴스 본문 추출 및 AI 요약 생성 중...", flush=True)
         
         processed_news = []
         
         for i, news in enumerate(headlines, 1):
-            print(f"\n[{i:2d}/{len(headlines)}] {news['press']} - {news['title'][:60]}...")
+            print(f"\n[{i:2d}/{len(headlines)}] {news['press']} - {news['title'][:60]}...", flush=True)
             
             # 본문 추출
-            print("    📄 본문 추출 중...")
+            print("    📄 본문 추출 중...", flush=True)
             content = crawl_article_content(news['url'])
             
             if content:
-                print(f"    ✅ 본문 추출 성공 (길이: {len(content)}자)")
+                print(f"    ✅ 본문 추출 성공 (길이: {len(content)}자)", flush=True)
                 
                 # LLM 요약
-                print("    🤖 AI 요약 생성 중...")
+                print("    🤖 AI 요약 생성 중...", flush=True)
                 summary = summarize_with_llm(content, news['title'], news['press'])
                 
                 if summary:
-                    print(f"    📝 AI 요약: {summary}")
+                    print(f"    📝 AI 요약: {summary}", flush=True)
                     news['ai_summary'] = summary
                 else:
-                    print("    ❌ AI 요약 실패")
+                    print("    ❌ AI 요약 실패", flush=True)
                     news['ai_summary'] = None
             else:
-                print("    ❌ 본문 추출 실패")
+                print("    ❌ 본문 추출 실패", flush=True)
                 news['ai_summary'] = None
             
             processed_news.append(news)
@@ -695,43 +723,43 @@ def main():
                 time.sleep(2)
         
         # 4단계: 결과 저장
-        print(f"\n💾 4단계: 결과 저장 중...")
+        print(f"\n💾 4단계: 결과 저장 중...", flush=True)
         filename = save_news_data(processed_news)
         
         # 5단계: 요약 결과 출력
-        print(f"\n📋 5단계: 최종 결과")
-        print("=" * 80)
+        print(f"\n📋 5단계: 최종 결과", flush=True)
+        print("=" * 80, flush=True)
         
         success_count = sum(1 for news in processed_news if news.get('ai_summary'))
         
-        print(f"📊 전체 뉴스: {len(processed_news)}개")
-        print(f"✅ 요약 성공: {success_count}개")
-        print(f"❌ 요약 실패: {len(processed_news) - success_count}개")
+        print(f"📊 전체 뉴스: {len(processed_news)}개", flush=True)
+        print(f"✅ 요약 성공: {success_count}개", flush=True)
+        print(f"❌ 요약 실패: {len(processed_news) - success_count}개", flush=True)
         
         for press in ['KBS', 'MBC', 'SBS']:
             press_news = [n for n in processed_news if n['press'] == press]
             press_summaries = [n for n in press_news if n.get('ai_summary')]
-            print(f"📺 {press}: {len(press_news)}개 (요약 완료: {len(press_summaries)}개)")
+            print(f"📺 {press}: {len(press_news)}개 (요약 완료: {len(press_summaries)}개)", flush=True)
         
-        print(f"\n💾 저장된 파일: {filename}")
+        print(f"\n💾 저장된 파일: {filename}", flush=True)
         
-        print("\n📺 방송3사 뉴스 요약:")
-        print("-" * 80)
+        print("\n📺 방송3사 뉴스 요약:", flush=True)
+        print("-" * 80, flush=True)
         
         for i, news in enumerate(processed_news, 1):
-            print(f"\n[{i:2d}] {news['press']} - {news['title']}")
+            print(f"\n[{i:2d}] {news['press']} - {news['title']}", flush=True)
             if news.get('ai_summary'):
-                print(f"    📝 {news['ai_summary']}")
+                print(f"    📝 {news['ai_summary']}", flush=True)
             else:
-                print(f"    ❌ 요약 없음")
+                print(f"    ❌ 요약 없음", flush=True)
         
-        print("\n" + "=" * 80)
-        print("🎉 네이버 뉴스스탠드 iframe 크롤링 완료!")
+        print("\n" + "=" * 80, flush=True)
+        print("🎉 네이버 뉴스스탠드 iframe 크롤링 완료!", flush=True)
         
     except KeyboardInterrupt:
-        print("\n⚠️ 사용자에 의해 중단되었습니다.")
+        print("\n⚠️ 사용자에 의해 중단되었습니다.", flush=True)
     except Exception as e:
-        print(f"❌ 실행 중 오류 발생: {e}")
+        print(f"❌ 실행 중 오류 발생: {e}", flush=True)
         import traceback
         traceback.print_exc()
         
@@ -739,7 +767,7 @@ def main():
         if driver:
             try:
                 driver.quit()
-                print("🔚 브라우저 종료 완료")
+                print("🔚 브라우저 종료 완료", flush=True)
             except:
                 pass
         
@@ -756,7 +784,7 @@ def main():
             if hasattr(driver, '_temp_dir'):
                 try:
                     shutil.rmtree(driver._temp_dir)
-                    print(f"🧹 임시 디렉토리 정리: {driver._temp_dir}")
+                    print(f"🧹 임시 디렉토리 정리: {driver._temp_dir}", flush=True)
                 except:
                     pass
             
@@ -766,11 +794,11 @@ def main():
             for temp_dir in temp_dirs:
                 try:
                     shutil.rmtree(temp_dir)
-                    print(f"🧹 임시 디렉토리 정리: {temp_dir}")
+                    print(f"🧹 임시 디렉토리 정리: {temp_dir}", flush=True)
                 except:
                     pass
                     
-            print("🧹 Chrome 프로세스 및 임시 파일 정리 완료")
+            print("🧹 Chrome 프로세스 및 임시 파일 정리 완료", flush=True)
         except:
             pass
 

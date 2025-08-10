@@ -3,34 +3,131 @@
 
 import json
 import time
+import requests
 from datetime import datetime
 from bs4 import BeautifulSoup
 import os
+import sys
+import tempfile
+import uuid
+import random
+import subprocess
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from webdriver_manager.chrome import ChromeDriverManager
+
+def setup_chrome_driver_ubuntu():
+    """우분투 환경에 최적화된 Chrome 드라이버 설정"""
+    
+    # 기존 Chrome 프로세스 정리
+    try:
+        subprocess.run(['pkill', '-f', 'chrome'], capture_output=True, timeout=5)
+        subprocess.run(['pkill', '-f', 'chromedriver'], capture_output=True, timeout=5)
+        time.sleep(2)
+        print("🧹 기존 Chrome/ChromeDriver 프로세스 정리 완료")
+    except:
+        pass
+    
+    try:
+        chrome_options = Options()
+        
+        # Docker 환경에서는 반드시 headless 모드 필요
+        chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--disable-gpu')
+        chrome_options.add_argument('--disable-software-rasterizer')
+        chrome_options.add_argument('--window-size=1280,720')
+        
+        # 세션 충돌 방지를 위한 핵심 옵션들
+        chrome_options.add_argument('--disable-web-security')
+        chrome_options.add_argument('--disable-features=VizDisplayCompositor,ChromeWhatsNewUI')
+        chrome_options.add_argument('--disable-extensions')
+        chrome_options.add_argument('--disable-plugins')
+        chrome_options.add_argument('--disable-default-apps')
+        chrome_options.add_argument('--disable-sync')
+        chrome_options.add_argument('--disable-background-timer-throttling')
+        chrome_options.add_argument('--disable-renderer-backgrounding')
+        chrome_options.add_argument('--disable-backgrounding-occluded-windows')
+        chrome_options.add_argument('--disable-client-side-phishing-detection')
+        chrome_options.add_argument('--disable-component-extensions-with-background-pages')
+        chrome_options.add_argument('--disable-ipc-flooding-protection')
+        chrome_options.add_argument('--no-default-browser-check')
+        chrome_options.add_argument('--no-first-run')
+        chrome_options.add_argument('--disable-background-networking')
+        chrome_options.add_argument('--disable-images')  # 이미지 로딩 비활성화로 속도 향상
+        
+        # 고유 세션을 위한 임시 디렉토리 생성
+        temp_dir = tempfile.mkdtemp(prefix=f'chrome_session_{uuid.uuid4().hex[:8]}_')
+        chrome_options.add_argument(f'--user-data-dir={temp_dir}')
+        
+        # 고유 디버깅 포트 설정
+        debug_port = random.randint(9500, 9999)
+        chrome_options.add_argument(f'--remote-debugging-port={debug_port}')
+        
+        # 메모리 및 성능 최적화
+        chrome_options.add_argument('--memory-pressure-off')
+        chrome_options.add_argument('--max_old_space_size=2048')
+        chrome_options.add_argument('--aggressive-cache-discard')
+        
+        # User Agent 설정
+        chrome_options.add_argument('--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36')
+        
+        # 자동화 감지 방지
+        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        
+        print(f"🔧 임시 세션 디렉토리: {temp_dir}")
+        print(f"🔧 디버깅 포트: {debug_port}")
+        
+        # Chrome 드라이버 초기화 - Docker 환경에서는 시스템 ChromeDriver 사용
+        driver = None
+        try:
+            driver = webdriver.Chrome(options=chrome_options)
+            print("✅ Chrome 드라이버 생성 성공")
+            
+        except Exception as e:
+            print(f"❌ Chrome 드라이버 생성 실패: {e}")
+            return None
+        
+        if driver:
+            # 타임아웃 및 기본 설정
+            driver.implicitly_wait(10)
+            driver.set_page_load_timeout(30)
+            
+            # 세션 정보 저장 (정리용)
+            driver._temp_dir = temp_dir
+            driver._debug_port = debug_port
+            
+            # 자동화 감지 방지 스크립트 실행
+            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
+            print("✅ Chrome 드라이버 설정 완료")
+            return driver
+        else:
+            return None
+                
+    except Exception as e:
+        print(f"❌ Chrome 드라이버 설정 중 전체 오류: {e}")
+        return None
 
 def get_webpage_with_selenium(url):
     """Selenium을 사용한 동적 웹페이지 HTML 가져오기"""
-    options = Options()
-    options.add_argument('--headless')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--window-size=1920,1080')
-    options.add_argument('--disable-blink-features=AutomationControlled')
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option('useAutomationExtension', False)
+    driver = None
     
     try:
         print("Selenium WebDriver 시작...")
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        
+        driver = setup_chrome_driver_ubuntu()
+        if not driver:
+            print("Chrome 드라이버 설정 실패")
+            return None
         
         print(f"페이지 로딩 중: {url}")
         driver.get(url)
@@ -73,11 +170,22 @@ def get_webpage_with_selenium(url):
         
     except Exception as e:
         print(f"Selenium 웹페이지 요청 실패: {str(e)}")
-        try:
-            driver.quit()
-        except:
-            pass
+        if driver:
+            try:
+                driver.quit()
+            except:
+                pass
         return None
+    
+    finally:
+        # 임시 디렉토리 정리
+        if driver and hasattr(driver, '_temp_dir'):
+            try:
+                import shutil
+                shutil.rmtree(driver._temp_dir)
+                print(f"🧹 임시 디렉토리 정리: {driver._temp_dir}")
+            except:
+                pass
 
 def crawl_anticorruption_law():
     """청탁금지법 크롤링 함수"""
@@ -207,23 +315,34 @@ def save_to_json(data, filename=None):
 def main():
     """메인 실행 함수"""
     print("청탁금지법 크롤링을 시작합니다...")
-    data = crawl_anticorruption_law()
     
-    if data and data.get('크롤링_상태') == '성공':
-        filepath = save_to_json(data)
-        print("크롤링이 성공적으로 완료되었습니다.")
-        print(f"데이터 저장 완료: {filepath}")
+    try:
+        data = crawl_anticorruption_law()
         
-        # 수집 결과 요약
-        print("\n=== 수집 결과 요약 ===")
-        print(f"법명: {data.get('법명', 'N/A')}")
-        print(f"시행 정보: {data.get('시행_법률_정보', 'N/A')}")
-        print(f"pgroup 개수: {data.get('pgroup_개수', 0)}개")
+        if data and data.get('크롤링_상태') == '성공':
+            filepath = save_to_json(data)
+            print("크롤링이 성공적으로 완료되었습니다.")
+            print(f"데이터 저장 완료: {filepath}")
             
-    else:
-        print("크롤링 실패")
-        print(f"오류: {data.get('오류_메시지', '알 수 없는 오류')}")
-        save_to_json(data, 'anticorruption_law_failed.json')
+            # 수집 결과 요약
+            print("\n=== 수집 결과 요약 ===")
+            print(f"법명: {data.get('법명', 'N/A')}")
+            print(f"시행 정보: {data.get('시행_법률_정보', 'N/A')}")
+            print(f"pgroup 개수: {data.get('pgroup_개수', 0)}개")
+                
+        else:
+            print("크롤링 실패")
+            print(f"오류: {data.get('오류_메시지', '알 수 없는 오류')}")
+            save_to_json(data, 'anticorruption_law_failed.json')
+    
+    finally:
+        # Chrome 프로세스 정리
+        try:
+            subprocess.run(['pkill', '-f', 'chrome'], capture_output=True, timeout=5)
+            subprocess.run(['pkill', '-f', 'chromedriver'], capture_output=True, timeout=5)
+            print("🧹 Chrome 프로세스 정리 완료")
+        except:
+            pass
 
 if __name__ == "__main__":
     main()

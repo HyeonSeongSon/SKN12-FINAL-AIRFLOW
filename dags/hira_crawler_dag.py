@@ -9,14 +9,9 @@ from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 from datetime import datetime, timedelta
 import os
-import sys
 import subprocess
 import logging
 import pendulum
-
-# 현재 디렉토리를 Python 경로에 추가
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(current_dir)
 
 # 한국 시간대 설정
 local_tz = pendulum.timezone('Asia/Seoul')
@@ -51,87 +46,46 @@ def run_hira_crawler():
         
         logging.info(f"🏥 HIRA 크롤러 시작: {crawler_script}")
         
-        # Python 스크립트 실행 - 실시간 출력
+        # Python 스크립트 실행 - 간단한 방식
         env = os.environ.copy()
         process = subprocess.Popen(
-            [sys.executable, '-u', crawler_script],
+            ['python3', crawler_script],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             cwd='/opt/airflow/func',
-            env=env,
-            bufsize=1
+            env=env
         )
         
-        # 실시간으로 stdout 출력
-        output_lines = []
-        error_lines = []
-        
-        # 타임아웃 설정
-        import time
-        start_time = time.time()
-        timeout = 1800  # 30분
-        
-        while True:
-            # 타임아웃 체크
-            if time.time() - start_time > timeout:
-                process.terminate()
-                logging.error(f"❌ 타임아웃: {timeout}초 초과")
-                raise subprocess.TimeoutExpired(cmd=[sys.executable, crawler_script], timeout=timeout)
+        # 타임아웃 설정 (30분)
+        try:
+            stdout, stderr = process.communicate(timeout=1800)
             
-            # stdout 읽기
-            line = process.stdout.readline()
-            if line:
-                line = line.rstrip()
-                output_lines.append(line)
-                logging.info(f"[HIRA 크롤러] {line}")
-            
-            # 프로세스 종료 확인
-            if process.poll() is not None:
-                # 남은 출력 읽기
-                for line in process.stdout:
-                    line = line.rstrip()
-                    output_lines.append(line)
-                    logging.info(f"[HIRA 크롤러] {line}")
+            if process.returncode == 0:
+                logging.info("✅ HIRA 크롤링 완료")
+                logging.info(f"출력: {stdout}")
                 
-                # stderr 읽기
-                for line in process.stderr:
-                    line = line.rstrip()
-                    error_lines.append(line)
-                    logging.error(f"[HIRA 크롤러 에러] {line}")
-                break
-            
-            # CPU 사용률을 낮추기 위한 짧은 대기
-            time.sleep(0.01)
-        
-        return_code = process.returncode
-        full_output = '\n'.join(output_lines)
-        full_error = '\n'.join(error_lines)
-        
-        # 실행 결과 처리
-        if return_code == 0:
-            logging.info("✅ HIRA 크롤링 프로세스 완료")
-            
-            # 생성된 파일 확인
-            import glob
-            func_dir = '/opt/airflow/func'
-            json_files = glob.glob(os.path.join(func_dir, 'hira_data_*.json'))
-            if json_files:
-                latest_file = max(json_files, key=os.path.getctime)
-                logging.info(f"생성된 파일: {latest_file}")
-                return {'status': 'success', 'file': latest_file, 'output': full_output}
+                # 생성된 파일 확인
+                import glob
+                func_dir = '/opt/airflow/func'
+                json_files = glob.glob(os.path.join(func_dir, 'hira_data_*.json'))
+                
+                if json_files:
+                    latest_file = max(json_files, key=os.path.getctime)
+                    logging.info(f"생성된 파일: {latest_file}")
+                    return {'status': 'success', 'file': latest_file, 'output': stdout}
+                else:
+                    logging.warning("JSON 파일이 생성되지 않았습니다.")
+                    return {'status': 'warning', 'message': 'JSON 파일 없음', 'output': stdout}
             else:
-                logging.warning("JSON 파일이 생성되지 않았습니다.")
-                return {'status': 'warning', 'message': 'JSON 파일 없음', 'output': full_output}
-        else:
-            logging.error(f"❌ HIRA 크롤링 실패 (exit code: {return_code})")
-            if full_error:
-                logging.error(f"에러 출력:\n{full_error}")
-            raise RuntimeError(f"크롤러 실행 실패: {full_error or '알 수 없는 오류'}")
+                logging.error(f"❌ HIRA 크롤링 실패: {stderr}")
+                raise RuntimeError(f"크롤러 실행 실패: {stderr}")
+                
+        except subprocess.TimeoutExpired:
+            process.terminate()
+            logging.error("❌ HIRA 크롤러 타임아웃 (30분)")
+            raise RuntimeError("크롤러 실행 타임아웃")
             
-    except subprocess.TimeoutExpired:
-        logging.error("❌ HIRA 크롤러 타임아웃 (30분)")
-        raise RuntimeError("크롤러 실행 타임아웃")
     except Exception as e:
         logging.error(f"❌ HIRA 크롤러 실행 중 오류: {e}")
         raise
@@ -170,6 +124,22 @@ def check_and_notify(**context):
         logging.error(f"실행 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         return {'status': 'error', 'message': str(e)}
 
+def cleanup_chrome_processes():
+    """Chrome 프로세스 정리"""
+    try:
+        logging.info("🧹 Chrome 프로세스 정리 중...")
+        
+        # Chrome 관련 프로세스 종료
+        subprocess.run(['pkill', '-f', 'chrome'], capture_output=True, timeout=10)
+        subprocess.run(['pkill', '-f', 'chromedriver'], capture_output=True, timeout=10)
+        
+        logging.info("✅ Chrome 프로세스 정리 완료")
+        return {'status': 'success', 'message': 'Chrome processes cleaned up'}
+        
+    except Exception as e:
+        logging.warning(f"⚠️ Chrome 프로세스 정리 중 오류 (무시 가능): {str(e)}")
+        return {'status': 'warning', 'message': str(e)}
+
 # Task 정의
 crawler_task = PythonOperator(
     task_id='run_crawler',
@@ -184,5 +154,12 @@ check_task = PythonOperator(
     dag=dag,
 )
 
+cleanup_task = PythonOperator(
+    task_id='cleanup_chrome',
+    python_callable=cleanup_chrome_processes,
+    dag=dag,
+    trigger_rule='all_done'
+)
+
 # Task 의존성 설정
-crawler_task >> check_task
+crawler_task >> check_task >> cleanup_task

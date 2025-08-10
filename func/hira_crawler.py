@@ -10,16 +10,99 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 import os
+import tempfile
+import uuid
+import random
+import subprocess
 
 def setup_driver():
-    chrome_options = Options()
-    chrome_options.add_argument('--headless')
-    chrome_options.add_argument('--no-sandbox')
-    chrome_options.add_argument('--disable-dev-shm-usage')
-    chrome_options.add_argument('--window-size=1920,1080')
+    """Chrome 드라이버 설정 (Docker 환경 최적화)"""
     
-    driver = webdriver.Chrome(options=chrome_options)
-    return driver
+    # 기존 Chrome 프로세스 정리
+    try:
+        subprocess.run(['pkill', '-f', 'chrome'], capture_output=True, timeout=5)
+        subprocess.run(['pkill', '-f', 'chromedriver'], capture_output=True, timeout=5)
+        time.sleep(1)
+        print("🧹 기존 Chrome 프로세스 정리 완료")
+    except:
+        pass
+    
+    try:
+        chrome_options = Options()
+        
+        # Docker 환경 필수 옵션
+        chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--disable-gpu')
+        chrome_options.add_argument('--disable-software-rasterizer')
+        chrome_options.add_argument('--window-size=1280,720')
+        
+        # SSL 및 보안 관련 옵션
+        chrome_options.add_argument('--ignore-ssl-errors-on-quic')
+        chrome_options.add_argument('--ignore-certificate-errors')
+        chrome_options.add_argument('--ignore-ssl-errors')
+        chrome_options.add_argument('--ignore-certificate-errors-spki-list')
+        chrome_options.add_argument('--disable-extensions-file-access-check')
+        chrome_options.add_argument('--allow-running-insecure-content')
+        
+        # 세션 충돌 방지 및 안정성 옵션
+        chrome_options.add_argument('--disable-web-security')
+        chrome_options.add_argument('--disable-features=VizDisplayCompositor,ChromeWhatsNewUI')
+        chrome_options.add_argument('--disable-extensions')
+        chrome_options.add_argument('--disable-plugins')
+        chrome_options.add_argument('--disable-default-apps')
+        chrome_options.add_argument('--disable-sync')
+        chrome_options.add_argument('--disable-background-timer-throttling')
+        chrome_options.add_argument('--disable-renderer-backgrounding')
+        chrome_options.add_argument('--disable-backgrounding-occluded-windows')
+        chrome_options.add_argument('--disable-client-side-phishing-detection')
+        chrome_options.add_argument('--disable-component-extensions-with-background-pages')
+        chrome_options.add_argument('--disable-ipc-flooding-protection')
+        chrome_options.add_argument('--no-default-browser-check')
+        chrome_options.add_argument('--no-first-run')
+        chrome_options.add_argument('--disable-background-networking')
+        
+        # 고유 세션 생성
+        temp_dir = tempfile.mkdtemp(prefix=f'hira_chrome_{uuid.uuid4().hex[:8]}_')
+        chrome_options.add_argument(f'--user-data-dir={temp_dir}')
+        
+        debug_port = random.randint(9500, 9999)
+        chrome_options.add_argument(f'--remote-debugging-port={debug_port}')
+        
+        # 성능 최적화
+        chrome_options.add_argument('--memory-pressure-off')
+        chrome_options.add_argument('--max_old_space_size=2048')
+        chrome_options.add_argument('--aggressive-cache-discard')
+        
+        # 자동화 감지 방지
+        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        
+        print(f"🔧 Chrome 세션 디렉토리: {temp_dir}")
+        print(f"🔧 디버깅 포트: {debug_port}")
+        
+        # 드라이버 생성
+        driver = webdriver.Chrome(options=chrome_options)
+        
+        # 세션 정보 저장
+        driver._temp_dir = temp_dir
+        driver._debug_port = debug_port
+        
+        # 타임아웃 설정
+        driver.implicitly_wait(10)
+        driver.set_page_load_timeout(30)
+        
+        # 자동화 감지 방지 스크립트
+        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        
+        print("✅ Chrome 드라이버 설정 완료")
+        return driver
+        
+    except Exception as e:
+        print(f"❌ Chrome 드라이버 설정 실패: {e}")
+        return None
 
 def get_today_date():
     today = datetime.now()
@@ -202,7 +285,21 @@ def crawl_hira_data(test_date=None):
         print(f"Error during crawling: {str(e)}")
     
     finally:
-        driver.quit()
+        if driver:
+            try:
+                driver.quit()
+                print("🔚 HIRA 브라우저 종료")
+            except:
+                pass
+            
+            # 임시 디렉토리 정리
+            if hasattr(driver, '_temp_dir'):
+                try:
+                    import shutil
+                    shutil.rmtree(driver._temp_dir)
+                    print(f"🧹 HIRA 임시 디렉토리 정리: {driver._temp_dir}")
+                except:
+                    pass
     
     return scraped_data
 
@@ -337,7 +434,21 @@ def test_crawling():
         print(f"Error during crawling: {str(e)}")
     
     finally:
-        driver.quit()
+        if driver:
+            try:
+                driver.quit()
+                print("🔚 HIRA 테스트 브라우저 종료")
+            except:
+                pass
+            
+            # 임시 디렉토리 정리
+            if hasattr(driver, '_temp_dir'):
+                try:
+                    import shutil
+                    shutil.rmtree(driver._temp_dir)
+                    print(f"🧹 HIRA 테스트 임시 디렉토리 정리: {driver._temp_dir}")
+                except:
+                    pass
     
     if scraped_data:
         filepath = save_to_json(scraped_data, "hira_data_test_range.json")

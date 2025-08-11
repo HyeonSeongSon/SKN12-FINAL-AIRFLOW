@@ -1,0 +1,8 @@
+{
+  "법명": "크롤링 실패",
+  "시행_법률_정보": "크롤링 실패",
+  "크롤링_시간": "2025-08-11T23:29:12.500964",
+  "소스_URL": "https://www.law.go.kr/LSW//lsInfoP.do?lsiSeq=268655&chrClsCd=010202&urlMode=lsInfoP&efYd=20250121&ancYnChk=0",
+  "크롤링_상태": "실패",
+  "오류_메시지": "iframe 페이지 HTML을 가져올 수 없습니다"
+}

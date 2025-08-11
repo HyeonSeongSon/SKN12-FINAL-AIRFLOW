@@ -4,6 +4,7 @@
 import json
 import os
 import glob
+import subprocess
 from datetime import datetime
 from typing import List, Dict, Optional
 
@@ -13,7 +14,14 @@ REQUIRED_FIELDS = ['크롤링_시간', '법명', '시행_법률_정보']
 
 def _get_directory(directory: Optional[str] = None) -> str:
     """디렉토리 경로를 반환하는 헬퍼 함수"""
-    return directory if directory else os.path.dirname(os.path.abspath(__file__))
+    if directory:
+        return directory
+    else:
+        # crawler_result 디렉토리를 기본으로 사용 - Docker 볼륨 마운트된 경로 사용
+        result_dir = '/home/son/SKN12-FINAL-AIRFLOW/crawler_result'
+        os.makedirs(result_dir, exist_ok=True)
+        
+        return result_dir if os.path.exists(result_dir) else os.path.dirname(os.path.abspath(__file__))
 
 def _find_json_files(directory: str) -> List[str]:
     """anticorruption_law_로 시작하는 JSON 파일들을 찾는 함수"""

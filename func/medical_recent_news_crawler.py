@@ -96,22 +96,30 @@ def setup_chrome_driver():
         print(f"🔧 Chrome 세션 디렉토리: {temp_dir}")
         print(f"🔧 디버깅 포트: {debug_port}")
         
-        # 드라이버 생성
-        driver = webdriver.Chrome(options=chrome_options)
+        # Chrome 드라이버 초기화 - Docker 환경에서는 시스템 ChromeDriver 사용
+        driver = None
+        try:
+            # Docker 환경에서는 시스템 ChromeDriver 직접 사용 (아키텍처 호환성 문제 방지)
+            driver = webdriver.Chrome(options=chrome_options)
+            
+        except Exception as e:
+            print(f"❌ Chrome 드라이버 생성 실패: {e}")
+            return None
         
-        # 세션 정보 저장
-        driver._temp_dir = temp_dir
-        driver._debug_port = debug_port
-        
-        # 타임아웃 설정
-        driver.implicitly_wait(10)
-        driver.set_page_load_timeout(30)
-        
-        # 자동화 감지 방지 스크립트
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        
-        print("✅ Chrome 드라이버 설정 완료")
-        return driver
+        if driver:
+            # 타임아웃 및 기본 설정
+            driver.implicitly_wait(10)
+            driver.set_page_load_timeout(30)
+            
+            # 세션 정보 저장 (정리용)
+            driver._temp_dir = temp_dir
+            driver._debug_port = debug_port
+            
+            # 자동화 감지 방지 스크립트
+            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
+            print("✅ Chrome 드라이버 초기화 완료")
+            return driver
         
     except Exception as e:
         print(f"❌ Chrome 드라이버 설정 실패: {e}")
@@ -447,17 +455,83 @@ def crawl_recent_news(base_url=None, target_dates=None):
         # 2단계: 각 뉴스 상세 정보 크롤링
         print(f"\n📊 {len(recent_news)}개 최근 뉴스의 상세 정보 크롤링 시작...")
         
-        for i, news_item in enumerate(recent_news, 1):
-            news_info = crawl_news_detail(driver, news_item, i)
+        i = 1
+        while i <= len(recent_news):
+            news_item = recent_news[i-1]
             
-            if news_info and news_info['title'] != "제목 추출 실패":
-                news_data.append(news_info)
-                print(f"   ✅ 뉴스 [{i}] 수집 완료")
-            else:
-                print(f"   ❌ 뉴스 [{i}] 수집 실패")
+            # 10개마다 또는 첫 시작 시 ChromeDriver 세션 초기화
+            if (i-1) % 10 == 0:
+                print(f"   🔄 ChromeDriver 세션 초기화 ({i}번째 뉴스)")
+                
+                # 기존 드라이버 정리
+                if driver:
+                    try:
+                        driver.quit()
+                    except:
+                        pass
+                
+                # 새 드라이버 생성
+                driver = setup_chrome_driver()
+                if not driver:
+                    print(f"   ❌ ChromeDriver 초기화 실패 - 크롤링 중단")
+                    break
+                print("   ✅ ChromeDriver 초기화 완료")
+            
+            # 개별 뉴스 크롤링 시도 (재시도 메커니즘 포함)
+            max_attempts = 5
+            success = False
+            
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    print(f"📰 [{i}] 뉴스 상세 정보 크롤링 시도 {attempt}/{max_attempts}...")
+                    
+                    # 세션 상태 확인
+                    try:
+                        driver.current_url  # 세션 확인
+                    except Exception as session_error:
+                        print(f"   ⚠️ ChromeDriver 세션 문제 감지: {session_error}")
+                        
+                        # 세션 재생성
+                        try:
+                            driver.quit()
+                        except:
+                            pass
+                        
+                        driver = setup_chrome_driver()
+                        if not driver:
+                            print(f"   ❌ ChromeDriver 재생성 실패")
+                            raise Exception("ChromeDriver 재생성 실패")
+                        print("   ✅ ChromeDriver 재생성 완료")
+                    
+                    # 뉴스 상세 정보 크롤링
+                    news_info = crawl_news_detail(driver, news_item, i)
+                    
+                    if news_info and news_info['title'] != "제목 추출 실패":
+                        news_data.append(news_info)
+                        print(f"   ✅ 뉴스 [{i}] 수집 완료")
+                        success = True
+                        break
+                    else:
+                        raise Exception("뉴스 정보 추출 실패")
+                        
+                except Exception as e:
+                    print(f"   ❌ 뉴스 [{i}] 시도 {attempt} 실패: {e}")
+                    
+                    if attempt < max_attempts:
+                        wait_time = attempt * 2
+                        print(f"   ⏰ {wait_time}초 후 재시도...")
+                        time.sleep(wait_time)
+                    else:
+                        print(f"   💥 뉴스 [{i}] 최종 실패 - 다음 뉴스로 진행")
+            
+            if not success:
+                print(f"   ⚠️ 뉴스 [{i}] 수집 실패 - 다음으로 이동")
+            
+            # 다음 뉴스로 이동
+            i += 1
             
             # 요청 간격 조정
-            if i < len(recent_news):
+            if i <= len(recent_news):
                 time.sleep(1)
         
         print(f"\n🎉 크롤링 완료: {len(news_data)}개 최근 뉴스 수집")
@@ -506,8 +580,11 @@ def save_to_json(data, filename=None):
         today = datetime.now().strftime('%Y%m%d')
         filename = f'medical_recent_news_{today}_{timestamp}.json'
     
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    filepath = os.path.join(current_dir, filename)
+    # crawler_result 디렉토리에 저장 - Docker 볼륨 마운트된 경로 사용
+    result_dir = '/home/son/SKN12-FINAL-AIRFLOW/crawler_result'
+    
+    os.makedirs(result_dir, exist_ok=True)
+    filepath = os.path.join(result_dir, filename)
     
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -515,7 +592,7 @@ def save_to_json(data, filename=None):
     print(f"💾 데이터 저장 완료: {filepath}")
     return filepath
 
-def main_with_retry(base_url=None, target_dates=None, max_retries=3):
+def main_with_retry(base_url=None, target_dates=None, max_retries=5):
     """재시도 메커니즘이 포함된 메인 실행 함수"""
     
     # 기본 URL 설정
@@ -624,7 +701,7 @@ def main_with_retry(base_url=None, target_dates=None, max_retries=3):
 
 def main(base_url=None, target_dates=None):
     """메인 실행 함수 (하위 호환성 유지)"""
-    main_with_retry(base_url, target_dates, max_retries=3)
+    main_with_retry(base_url, target_dates, max_retries=5)
 
 if __name__ == "__main__":
     

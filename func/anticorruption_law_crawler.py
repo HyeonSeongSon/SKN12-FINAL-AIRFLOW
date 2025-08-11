@@ -19,7 +19,6 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
-from webdriver_manager.chrome import ChromeDriverManager
 
 def setup_chrome_driver_ubuntu():
     """우분투 환경에 최적화된 Chrome 드라이버 설정"""
@@ -304,8 +303,11 @@ def save_to_json(data, filename=None):
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = f'anticorruption_law_{timestamp}.json'
     
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    filepath = os.path.join(current_dir, filename)
+    # crawler_result 디렉토리에 저장 - Docker 볼륨 마운트된 경로 사용
+    result_dir = '/home/son/SKN12-FINAL-AIRFLOW/crawler_result'
+    
+    os.makedirs(result_dir, exist_ok=True)
+    filepath = os.path.join(result_dir, filename)
     
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)

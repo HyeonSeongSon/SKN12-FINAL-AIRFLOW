@@ -67,8 +67,9 @@ def run_hira_crawler():
                 
                 # 생성된 파일 확인
                 import glob
-                func_dir = '/opt/airflow/func'
-                json_files = glob.glob(os.path.join(func_dir, 'hira_data_*.json'))
+                # 크롤러가 실제로 저장하는 경로와 일치시킴
+                result_dir = '/home/son/SKN12-FINAL-AIRFLOW/crawler_result'
+                json_files = glob.glob(os.path.join(result_dir, 'hira_data_*.json'))
                 
                 if json_files:
                     latest_file = max(json_files, key=os.path.getctime)

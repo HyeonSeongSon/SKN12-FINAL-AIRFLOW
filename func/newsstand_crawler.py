@@ -12,6 +12,7 @@ sys.stderr.reconfigure(line_buffering=True)
 
 import requests
 import os
+import subprocess
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 import openai
@@ -645,9 +646,11 @@ def save_news_data(news_list, filename=None):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"newsstand_iframe_{timestamp}.json"
     
-    # 절대 경로로 저장 위치 명확히 지정
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    filepath = os.path.join(current_dir, filename)
+    # crawler_result 디렉토리에 저장 - Docker 볼륨 마운트된 경로 사용
+    result_dir = '/home/son/SKN12-FINAL-AIRFLOW/crawler_result'
+    
+    os.makedirs(result_dir, exist_ok=True)
+    filepath = os.path.join(result_dir, filename)
     
     try:
         with open(filepath, 'w', encoding='utf-8') as f:

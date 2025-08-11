@@ -75,6 +75,9 @@ def setup_driver():
         chrome_options.add_argument('--max_old_space_size=2048')
         chrome_options.add_argument('--aggressive-cache-discard')
         
+        # User Agent 설정
+        chrome_options.add_argument('--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36')
+        
         # 자동화 감지 방지
         chrome_options.add_argument('--disable-blink-features=AutomationControlled')
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
@@ -83,22 +86,31 @@ def setup_driver():
         print(f"🔧 Chrome 세션 디렉토리: {temp_dir}")
         print(f"🔧 디버깅 포트: {debug_port}")
         
-        # 드라이버 생성
-        driver = webdriver.Chrome(options=chrome_options)
+        # Chrome 드라이버 초기화 - Docker 환경에서는 시스템 ChromeDriver 사용
+        driver = None
+        try:
+            # Docker 환경에서는 시스템 ChromeDriver 직접 사용 (아키텍처 호환성 문제 방지)
+            driver = webdriver.Chrome(options=chrome_options)
+            print("✅ Chrome 드라이버 생성 성공")
+            
+        except Exception as e:
+            print(f"❌ Chrome 드라이버 생성 실패: {e}")
+            return None
         
-        # 세션 정보 저장
-        driver._temp_dir = temp_dir
-        driver._debug_port = debug_port
-        
-        # 타임아웃 설정
-        driver.implicitly_wait(10)
-        driver.set_page_load_timeout(30)
-        
-        # 자동화 감지 방지 스크립트
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        
-        print("✅ Chrome 드라이버 설정 완료")
-        return driver
+        if driver:
+            # 타임아웃 및 기본 설정
+            driver.implicitly_wait(10)
+            driver.set_page_load_timeout(30)
+            
+            # 세션 정보 저장 (정리용)
+            driver._temp_dir = temp_dir
+            driver._debug_port = debug_port
+            
+            # 자동화 감지 방지 스크립트
+            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
+            print("✅ Chrome 드라이버 설정 완료")
+            return driver
         
     except Exception as e:
         print(f"❌ Chrome 드라이버 설정 실패: {e}")
@@ -357,8 +369,11 @@ def save_to_json(data, filename=None):
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = f'hira_data_{timestamp}.json'
     
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    filepath = os.path.join(current_dir, filename)
+    # crawler_result 디렉토리에 저장 - Docker 볼륨 마운트된 경로 사용
+    result_dir = '/home/son/SKN12-FINAL-AIRFLOW/crawler_result'
+    
+    os.makedirs(result_dir, exist_ok=True)
+    filepath = os.path.join(result_dir, filename)
     
     with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)

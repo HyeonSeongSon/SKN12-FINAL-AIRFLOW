@@ -127,8 +127,9 @@ if __name__ == "__main__":
             
             # 생성된 테스트 파일 확인
             import glob
-            func_dir = '/opt/airflow/func'
-            test_files = glob.glob(os.path.join(func_dir, 'hira_data_test_range.json'))
+            # 크롤러가 실제로 저장하는 경로와 일치시킴
+            result_dir = '/home/son/SKN12-FINAL-AIRFLOW/crawler_result'
+            test_files = glob.glob(os.path.join(result_dir, 'hira_data_test_range.json'))
             if test_files:
                 latest_file = test_files[0]
                 logging.info(f"생성된 테스트 파일: {latest_file}")

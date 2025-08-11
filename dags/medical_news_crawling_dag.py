@@ -145,8 +145,9 @@ def run_recent_news_crawler():
                 
                 # 생성된 파일 확인
                 import glob
-                func_dir = '/opt/airflow/func' if os.getenv('AIRFLOW__CORE__EXECUTOR') else os.path.join(os.path.dirname(current_dir), 'func')
-                json_files = glob.glob(os.path.join(func_dir, 'medical_recent_news_*.json'))
+                # 크롤러가 실제로 저장하는 경로와 일치시킴
+                result_dir = '/home/son/SKN12-FINAL-AIRFLOW/crawler_result'
+                json_files = glob.glob(os.path.join(result_dir, 'medical_recent_news_*.json'))
                 
                 if json_files:
                     latest_file = max(json_files, key=os.path.getctime)
@@ -255,8 +256,9 @@ def run_trending_news_crawler():
                 
                 # 생성된 파일 확인
                 import glob
-                func_dir = '/opt/airflow/func' if os.getenv('AIRFLOW__CORE__EXECUTOR') else os.path.join(os.path.dirname(current_dir), 'func')
-                json_files = glob.glob(os.path.join(func_dir, 'medical_top_trending_news_*.json'))
+                # 크롤러가 실제로 저장하는 경로와 일치시킴
+                result_dir = '/home/son/SKN12-FINAL-AIRFLOW/crawler_result'
+                json_files = glob.glob(os.path.join(result_dir, 'medical_top_trending_news_*.json'))
                 
                 if json_files:
                     latest_file = max(json_files, key=os.path.getctime)

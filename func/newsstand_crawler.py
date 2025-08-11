@@ -662,11 +662,11 @@ def save_news_data(news_list, filename=None):
         log_message(f"    시도한 경로: {filepath}", force=True)
         return None
 
-def main():
-    """메인 실행 함수"""
+def main_with_retry(max_retries=3):
+    """재시도 메커니즘이 포함된 메인 실행 함수"""
     log_message("=" * 80, force=True)
     log_message("📺 네이버 뉴스스탠드 iframe 기반 KBS/MBC/SBS 뉴스 크롤러", force=True)
-    log_message("🐧 우분투 환경 최적화", force=True)
+    log_message("🐧 우분투 환경 최적화 + 3회 재시도 메커니즘", force=True)
     log_message("=" * 80, force=True)
     
     # OpenAI API 키 확인
@@ -676,44 +676,35 @@ def main():
         log_message("   OPENAI_API_KEY=your_openai_api_key", force=True)
         return
     
-    driver = None
     headlines = []
-    max_retries = 3  # 최대 3회 재시도
     
-    try:
-        for attempt in range(max_retries):
-            log_message(f"\n{'🔄' if attempt > 0 else '🚀'} {'재시도 ' + str(attempt) + '/' + str(max_retries-1) if attempt > 0 else '1단계'}: Chrome 브라우저 설정 중...", force=True)
+    for attempt in range(1, max_retries + 1):
+        driver = None
+        try:
+            log_message(f"\n🔄 뉴스스탠드 크롤링 시도 {attempt}/{max_retries}", force=True)
             
-            # 기존 드라이버가 있으면 종료
-            if driver:
-                try:
-                    driver.quit()
-                    time.sleep(2)
-                except:
-                    pass
+            # Chrome 프로세스 정리 (재시도 전)
+            try:
+                import subprocess
+                subprocess.run(['pkill', '-f', 'chrome'], capture_output=True, timeout=5)
+                subprocess.run(['pkill', '-f', 'chromedriver'], capture_output=True, timeout=5)
+                time.sleep(2)
+                log_message("🧹 이전 Chrome 프로세스 정리 완료")
+            except:
+                pass
             
             # 새로운 드라이버 설정
+            log_message(f"🚀 1단계: Chrome 브라우저 설정 중... (시도 {attempt}/{max_retries})", force=True)
             driver = setup_chrome_driver_ubuntu()
             if not driver:
-                log_message("❌ Chrome 드라이버를 설정할 수 없습니다.", force=True)
-                if attempt < max_retries - 1:
-                    log_message("🔄 브라우저 재설정 후 재시도...", force=True)
-                    time.sleep(5)
-                    continue
-                else:
-                    return
+                raise Exception("Chrome 드라이버 설정 실패")
             
-            # 2단계: 뉴스스탠드 크롤링
-            log_message(f"\n📰 2단계: iframe 기반 뉴스 수집 중... (시도 {attempt + 1}/{max_retries})", force=True)
+            # 뉴스스탠드 크롤링
+            log_message(f"📰 2단계: iframe 기반 뉴스 수집 중... (시도 {attempt}/{max_retries})", force=True)
             headlines = crawl_newsstand_with_iframe(driver)
             
             if not headlines:
-                log_message("❌ 뉴스를 수집할 수 없습니다.", force=True)
-                if attempt < max_retries - 1:
-                    log_message("🔄 새로운 브라우저 세션으로 재시도...", force=True)
-                    continue
-                else:
-                    return
+                raise Exception("뉴스 수집 실패: 헤드라인 없음")
             
             # 크롤링 결과 검증
             found_presses = list(set([news['press'] for news in headlines]))
@@ -723,136 +714,162 @@ def main():
             log_message(f"✅ 총 {len(headlines)}개의 뉴스를 수집했습니다.", force=True)
             log_message(f"📊 수집된 언론사: {found_presses}", force=True)
             
-            if missing_presses:
-                log_message(f"⚠️ 빠진 언론사: {missing_presses}", force=True)
-                if attempt < max_retries - 1:
-                    log_message(f"🔄 브라우저를 새로 열어서 재시도합니다... (시도 {attempt + 2}/{max_retries})", force=True)
-                    continue
-                else:
-                    log_message(f"❌ {max_retries}회 시도 후에도 {missing_presses} 언론사를 찾을 수 없었습니다.", force=True)
-                    break
-            else:
-                log_message("🎉 KBS, MBC, SBS 모든 언론사의 뉴스를 성공적으로 수집했습니다!", force=True)
+            # 성공 조건: 최소 2개 언론사 또는 마지막 시도에서는 1개 이상
+            min_required = 2 if attempt < max_retries else 1
+            if len(found_presses) >= min_required:
+                log_message(f"✅ 뉴스스탠드 크롤링 성공! ({attempt}/{max_retries})", force=True)
+                if missing_presses:
+                    log_message(f"⚠️ 일부 누락된 언론사: {missing_presses}", force=True)
                 break
-        
-        if not headlines:
-            log_message("❌ 모든 시도에서 뉴스를 수집할 수 없었습니다.", force=True)
-            return
-        
-        # 3단계: 본문 추출 및 요약
-        log_message(f"\n📝 3단계: 뉴스 본문 추출 및 AI 요약 생성 중...", force=True)
-        
-        processed_news = []
-        
-        for i, news in enumerate(headlines, 1):
-            print(f"\n[{i:2d}/{len(headlines)}] {news['press']} - {news['title'][:60]}...", flush=True)
-            
-            # 본문 추출
-            print("    📄 본문 추출 중...", flush=True)
-            content = crawl_article_content(news['url'])
-            
-            if content:
-                print(f"    ✅ 본문 추출 성공 (길이: {len(content)}자)", flush=True)
-                
-                # LLM 요약
-                print("    🤖 AI 요약 생성 중...", flush=True)
-                summary = summarize_with_llm(content, news['title'], news['press'])
-                
-                if summary:
-                    print(f"    📝 AI 요약: {summary}", flush=True)
-                    news['ai_summary'] = summary
-                else:
-                    print("    ❌ AI 요약 실패", flush=True)
-                    news['ai_summary'] = None
             else:
-                print("    ❌ 본문 추출 실패", flush=True)
+                raise Exception(f"불충분한 언론사 수집: {found_presses} (최소 {min_required}개 필요)")
+                
+        except Exception as e:
+            log_message(f"❌ 시도 {attempt} 실패: {e}", force=True)
+            
+            # 마지막 시도가 아니면 재시도 안내
+            if attempt < max_retries:
+                wait_time = attempt * 5  # 재시도 간격을 점진적으로 증가
+                log_message(f"⏰ {wait_time}초 후 재시도합니다...", force=True)
+                time.sleep(wait_time)
+            else:
+                log_message(f"💥 모든 시도 실패. 최대 재시도 횟수({max_retries}) 도달", force=True)
+                headlines = []  # 빈 결과 설정
+        
+        finally:
+            # 각 시도마다 드라이버 정리
+            if driver:
+                try:
+                    driver.quit()
+                    log_message(f"🔚 브라우저 종료 (시도 {attempt})")
+                    time.sleep(2)
+                except:
+                    pass
+            
+            # Chrome 프로세스 강제 정리
+            try:
+                import subprocess
+                subprocess.run(['pkill', '-f', 'chrome'], capture_output=True, timeout=5)
+                subprocess.run(['pkill', '-f', 'chromedriver'], capture_output=True, timeout=5)
+            except:
+                pass
+    
+    # 결과 처리
+    if not headlines:
+        log_message("💥 뉴스스탠드 크롤링 최종 실패!", force=True)
+        return
+        
+    return headlines
+
+def main():
+    """메인 실행 함수 (하위 호환성 유지)"""
+    headlines = main_with_retry(max_retries=3)
+    
+    if not headlines:
+        log_message("💥 뉴스스탠드 크롤링 최종 실패!", force=True)
+        return
+        
+    # 3단계: 본문 추출 및 요약
+    log_message(f"\n📝 3단계: 뉴스 본문 추출 및 AI 요약 생성 중...", force=True)
+    
+    processed_news = []
+    
+    for i, news in enumerate(headlines, 1):
+        print(f"\n[{i:2d}/{len(headlines)}] {news['press']} - {news['title'][:60]}...", flush=True)
+        
+        # 본문 추출
+        print("    📄 본문 추출 중...", flush=True)
+        content = crawl_article_content(news['url'])
+        
+        if content:
+            print(f"    ✅ 본문 추출 성공 (길이: {len(content)}자)", flush=True)
+            
+            # LLM 요약
+            print("    🤖 AI 요약 생성 중...", flush=True)
+            summary = summarize_with_llm(content, news['title'], news['press'])
+            
+            if summary:
+                print(f"    📝 AI 요약: {summary}", flush=True)
+                news['ai_summary'] = summary
+            else:
+                print("    ❌ AI 요약 실패", flush=True)
                 news['ai_summary'] = None
-            
-            processed_news.append(news)
-            
-            # API 제한 고려한 대기
-            if i < len(headlines):
-                time.sleep(2)
+        else:
+            print("    ❌ 본문 추출 실패", flush=True)
+            news['ai_summary'] = None
         
-        # 4단계: 결과 저장
-        print(f"\n💾 4단계: 결과 저장 중...", flush=True)
-        filename = save_news_data(processed_news)
+        processed_news.append(news)
         
-        # 5단계: 요약 결과 출력
-        print(f"\n📋 5단계: 최종 결과", flush=True)
-        print("=" * 80, flush=True)
+        # API 제한 고려한 대기
+        if i < len(headlines):
+            time.sleep(2)
+    
+    # 4단계: 결과 저장
+    print(f"\n💾 4단계: 결과 저장 중...", flush=True)
+    filename = save_news_data(processed_news)
+    
+    # 5단계: 요약 결과 출력
+    print(f"\n📋 5단계: 최종 결과", flush=True)
+    print("=" * 80, flush=True)
+    
+    success_count = sum(1 for news in processed_news if news.get('ai_summary'))
+    
+    print(f"📊 전체 뉴스: {len(processed_news)}개", flush=True)
+    print(f"✅ 요약 성공: {success_count}개", flush=True)
+    print(f"❌ 요약 실패: {len(processed_news) - success_count}개", flush=True)
+    
+    for press in ['KBS', 'MBC', 'SBS']:
+        press_news = [n for n in processed_news if n['press'] == press]
+        press_summaries = [n for n in press_news if n.get('ai_summary')]
+        print(f"📺 {press}: {len(press_news)}개 (요약 완료: {len(press_summaries)}개)", flush=True)
+    
+    print(f"\n💾 저장된 파일: {filename}", flush=True)
+    
+    print("\n📺 방송3사 뉴스 요약:", flush=True)
+    print("-" * 80, flush=True)
+    
+    for i, news in enumerate(processed_news, 1):
+        print(f"\n[{i:2d}] {news['press']} - {news['title']}", flush=True)
+        if news.get('ai_summary'):
+            print(f"    📝 {news['ai_summary']}", flush=True)
+        else:
+            print(f"    ❌ 요약 없음", flush=True)
+    
+    print("\n" + "=" * 80, flush=True)
+    print("🎉 네이버 뉴스스탠드 iframe 크롤링 완료!", flush=True)
+
+def cleanup_resources():
+    """리소스 정리 함수"""
+    try:
+        import subprocess
+        import shutil
+        import glob
         
-        success_count = sum(1 for news in processed_news if news.get('ai_summary'))
+        # Chrome 프로세스 정리
+        subprocess.run(['pkill', '-f', 'chrome'], capture_output=True, timeout=5)
+        subprocess.run(['pkill', '-f', 'chromedriver'], capture_output=True, timeout=5)
         
-        print(f"📊 전체 뉴스: {len(processed_news)}개", flush=True)
-        print(f"✅ 요약 성공: {success_count}개", flush=True)
-        print(f"❌ 요약 실패: {len(processed_news) - success_count}개", flush=True)
-        
-        for press in ['KBS', 'MBC', 'SBS']:
-            press_news = [n for n in processed_news if n['press'] == press]
-            press_summaries = [n for n in press_news if n.get('ai_summary')]
-            print(f"📺 {press}: {len(press_news)}개 (요약 완료: {len(press_summaries)}개)", flush=True)
-        
-        print(f"\n💾 저장된 파일: {filename}", flush=True)
-        
-        print("\n📺 방송3사 뉴스 요약:", flush=True)
-        print("-" * 80, flush=True)
-        
-        for i, news in enumerate(processed_news, 1):
-            print(f"\n[{i:2d}] {news['press']} - {news['title']}", flush=True)
-            if news.get('ai_summary'):
-                print(f"    📝 {news['ai_summary']}", flush=True)
-            else:
-                print(f"    ❌ 요약 없음", flush=True)
-        
-        print("\n" + "=" * 80, flush=True)
-        print("🎉 네이버 뉴스스탠드 iframe 크롤링 완료!", flush=True)
-        
+        # 임시 디렉토리 정리
+        temp_dirs = glob.glob('/tmp/chrome_session_*')
+        for temp_dir in temp_dirs:
+            try:
+                shutil.rmtree(temp_dir)
+                print(f"🧹 임시 디렉토리 정리: {temp_dir}", flush=True)
+            except:
+                pass
+                
+        print("🧹 Chrome 프로세스 및 임시 파일 정리 완료", flush=True)
+    except:
+        pass
+
+if __name__ == "__main__":
+    try:
+        main()
     except KeyboardInterrupt:
         print("\n⚠️ 사용자에 의해 중단되었습니다.", flush=True)
     except Exception as e:
         print(f"❌ 실행 중 오류 발생: {e}", flush=True)
         import traceback
         traceback.print_exc()
-        
     finally:
-        if driver:
-            try:
-                driver.quit()
-                print("🔚 브라우저 종료 완료", flush=True)
-            except:
-                pass
-        
-        # Chrome 프로세스 및 임시 디렉토리 정리
-        try:
-            import subprocess
-            import shutil
-            
-            # Chrome 프로세스 정리
-            subprocess.run(['pkill', '-f', 'chrome'], capture_output=True, timeout=5)
-            subprocess.run(['pkill', '-f', 'chromedriver'], capture_output=True, timeout=5)
-            
-            # 임시 디렉토리 정리 (driver에 저장된 정보 활용)
-            if hasattr(driver, '_temp_dir'):
-                try:
-                    shutil.rmtree(driver._temp_dir)
-                    print(f"🧹 임시 디렉토리 정리: {driver._temp_dir}", flush=True)
-                except:
-                    pass
-            
-            # 추가 임시 디렉토리 정리
-            import glob
-            temp_dirs = glob.glob('/tmp/chrome_session_*')
-            for temp_dir in temp_dirs:
-                try:
-                    shutil.rmtree(temp_dir)
-                    print(f"🧹 임시 디렉토리 정리: {temp_dir}", flush=True)
-                except:
-                    pass
-                    
-            print("🧹 Chrome 프로세스 및 임시 파일 정리 완료", flush=True)
-        except:
-            pass
-
-if __name__ == "__main__":
-    main()
+        cleanup_resources()

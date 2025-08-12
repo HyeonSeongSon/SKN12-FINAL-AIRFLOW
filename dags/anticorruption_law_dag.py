@@ -104,7 +104,7 @@ dag = DAG(
     'anticorruption_law_crawler',
     default_args=default_args,
     description='청탁금지법 데이터 크롤링 및 처리',
-    schedule='0 13 * * *',  # 매일 13:00 (한국시간)
+    schedule='20 13 * * *',  # 매일 13:00 (한국시간)
     max_active_runs=1,
     tags=['law', 'anticorruption', 'crawler']
 )

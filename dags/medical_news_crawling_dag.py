@@ -4,7 +4,7 @@
 의료뉴스 크롤링 DAG
 - recent_news: 최근(오늘/어제) 뉴스 크롤링
 - trending_news: 당일 트렌딩 뉴스 크롤링
-매일 09시와 13시에 두 크롤러를 병렬로 실행
+매일 09시와 13시에 두 크롤러를 순차적으로 실행
 """
 
 from airflow import DAG
@@ -66,7 +66,7 @@ dag = DAG(
     description='의료뉴스 크롤링 - 최근뉴스 & 트렌딩뉴스',
     schedule='0 9,13 * * 1-5',
     max_active_runs=1,
-    tags=['medical', 'news', 'crawling', 'parallel']
+    tags=['medical', 'news', 'crawling', 'sequential']
 )
 
 def run_recent_news_crawler():
@@ -307,6 +307,19 @@ def cleanup_chrome_processes():
         logging.warning(f"⚠️ Chrome 프로세스 정리 중 오류 (무시 가능): {str(e)}")
         return {'status': 'warning', 'message': str(e)}
 
+def add_delay_between_crawlers():
+    """크롤러 간 대기 시간 추가"""
+    import time
+    try:
+        delay_seconds = 30  # 30초 대기
+        logging.info(f"⏰ 크롤러 간 {delay_seconds}초 대기 중...")
+        time.sleep(delay_seconds)
+        logging.info("✅ 대기 완료, 다음 크롤러 준비됨")
+        return {'status': 'success', 'delay_seconds': delay_seconds}
+    except Exception as e:
+        logging.error(f"❌ 대기 중 오류: {str(e)}")
+        return {'status': 'error', 'message': str(e)}
+
 def aggregate_results(**context):
     """크롤링 결과 집계"""
     try:
@@ -324,22 +337,30 @@ def aggregate_results(**context):
             total_files += 1
             recent_file = recent_result.get('file', 'Unknown')
             logging.info(f"📰 최근 뉴스 크롤링 성공: {recent_file}")
+        else:
+            logging.warning(f"📰 최근 뉴스 크롤링 실패: {recent_result}")
         
         if trending_result and trending_result.get('status') == 'success':
             total_files += 1
             trending_file = trending_result.get('file', 'Unknown')
             logging.info(f"📈 트렌딩 뉴스 크롤링 성공: {trending_file}")
+        else:
+            logging.warning(f"📈 트렌딩 뉴스 크롤링 실패: {trending_result}")
         
         logging.info(f"🎯 성공한 크롤링: {total_files}/2개")
         logging.info(f"📊 실행 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        logging.info("✅ 의료뉴스 크롤링 완료!")
+        
+        if total_files > 0:
+            logging.info("✅ 의료뉴스 크롤링 완료!")
+        else:
+            logging.warning("⚠️ 모든 크롤링이 실패했습니다!")
         
         return {
             'total_successful': total_files,
             'recent_news_file': recent_file,
             'trending_news_file': trending_file,
             'timestamp': datetime.now().isoformat(),
-            'status': 'completed'
+            'status': 'completed' if total_files > 0 else 'failed'
         }
         
     except Exception as e:
@@ -362,6 +383,14 @@ crawl_recent_news = PythonOperator(
     python_callable=run_recent_news_crawler,
     dag=dag,
     execution_timeout=timedelta(minutes=30)
+)
+
+# 크롤러 간 대기
+delay_task = PythonOperator(
+    task_id='delay_between_crawlers',
+    python_callable=add_delay_between_crawlers,
+    dag=dag,
+    execution_timeout=timedelta(minutes=2)
 )
 
 # 트렌딩 뉴스 크롤링
@@ -388,8 +417,8 @@ cleanup_end = PythonOperator(
     execution_timeout=timedelta(minutes=5)
 )
 
-# Task 의존성 설정
-cleanup_start >> [crawl_recent_news, crawl_trending_news] >> aggregate_task >> cleanup_end
+# Task 의존성 설정 - 순차적 실행 (크롤러 간 대기 추가)
+cleanup_start >> crawl_recent_news >> delay_task >> crawl_trending_news >> aggregate_task >> cleanup_end
 
 # DAG 문서화
 dag.doc_md = """
@@ -405,10 +434,11 @@ dag.doc_md = """
 
 ## 주요 기능
 1. **최근 뉴스 수집**: 오늘/어제 뉴스 크롤링 (날짜 기반 필터링)
-2. **트렌딩 뉴스 수집**: 당일 트렌딩 뉴스 크롤링
+2. **트렌딩 뉴스 수집**: 당일 트렌딩 뉴스 크롤링 (최근 뉴스 완료 후 실행)
 3. **AI 요약**: OpenAI GPT-4o를 사용한 뉴스 요약 생성
 4. **결과 저장**: JSON 형태로 파일 저장
 5. **실시간 로깅**: 크롤링 진행상황을 실시간으로 Airflow 로그에 출력
+6. **순차 실행**: 리소스 경합을 방지하기 위해 크롤러들을 순차적으로 실행
 
 ## 환경 설정
 - `OPENAI_API_KEY`: OpenAI API 키 (필수)

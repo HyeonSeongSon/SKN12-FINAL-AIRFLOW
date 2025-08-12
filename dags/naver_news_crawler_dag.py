@@ -64,7 +64,7 @@ dag = DAG(
     'naver_news_crawler_v3',
     default_args=default_args,
     description='네이버 뉴스스탠드 KBS/MBC/SBS 크롤링 및 AI 요약',
-    schedule='0 9,13 * * *',
+    schedule='10 9,13 * * *',
     max_active_runs=1,
     tags=['news', 'crawler', 'ai-summary']
 )

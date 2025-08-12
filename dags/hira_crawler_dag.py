@@ -33,7 +33,7 @@ dag = DAG(
     'hira_crawler_daily',
     default_args=default_args,
     description='매일 13시에 HIRA 고시 데이터를 크롤링하는 DAG',
-    schedule='0 13 * * *',
+    schedule='25 13 * * *',
     max_active_runs=1,
     tags=['hira', 'crawler', 'daily']
 )

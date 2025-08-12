@@ -104,11 +104,29 @@ def setup_chrome_driver_ubuntu():
         log_message(f"🔧 임시 세션 디렉토리: {temp_dir}")
         log_message(f"🔧 디버깅 포트: {debug_port}")
         
-        # Chrome 드라이버 초기화 - Docker 환경에서는 시스템 ChromeDriver 사용
+        # Chrome 드라이버 초기화 - 명시적 ChromeDriver 경로 사용
         driver = None
         try:
-            driver = webdriver.Chrome(options=chrome_options)
-            log_message("✅ Chrome 드라이버 생성 성공")
+            # ChromeDriver 경로 설정 (Docker 우선, 로컬 대안)
+            chromedriver_paths = [
+                '/usr/local/bin/chromedriver',  # Docker 환경
+                '/home/son/chromedriver'        # 로컬 환경
+            ]
+            
+            service = None
+            for path in chromedriver_paths:
+                if os.path.exists(path):
+                    service = Service(path)
+                    log_message(f"🔧 ChromeDriver 경로 발견: {path}")
+                    break
+            
+            if service:
+                driver = webdriver.Chrome(service=service, options=chrome_options)
+                log_message(f"✅ Chrome 드라이버 생성 성공 (명시적 경로)")
+            else:
+                # fallback to system path
+                driver = webdriver.Chrome(options=chrome_options)
+                log_message("✅ Chrome 드라이버 생성 성공 (시스템 경로)")
             
         except Exception as e:
             log_message(f"❌ Chrome 드라이버 생성 실패: {e}")

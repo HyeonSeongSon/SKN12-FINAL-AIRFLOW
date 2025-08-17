@@ -140,6 +140,11 @@ def run_report_generator():
             if process.returncode == 0:
                 logging.info("✅ 전략 보고서 생성 완료")
                 
+                # "분석할 뉴스 데이터가 없습니다" 메시지 체크
+                if "분석할 뉴스 데이터가 없습니다" in stdout:
+                    logging.warning("⚠️ 분석할 뉴스 데이터가 없어서 리포트 생성을 건너뜁니다.")
+                    return {'status': 'no_data', 'message': '분석할 뉴스 데이터가 없음', 'output': stdout}
+                
                 # 생성된 파일 확인
                 import glob
                 result_dir = '/home/son/SKN12-FINAL-AIRFLOW/crawler_result'
@@ -176,33 +181,204 @@ def run_report_generator():
         logging.error(f"❌ 보고서 생성기 실행 중 오류: {e}")
         raise
 
-def check_and_notify(**context):
-    """보고서 생성 결과 확인"""
+def upload_strategy_report_to_db(**context):
+    """생성된 전략 보고서를 데이터베이스에 업로드"""
     try:
         # 이전 태스크 결과 가져오기
-        task_result = context['task_instance'].xcom_pull(task_ids='generate_report')
+        report_result = context['task_instance'].xcom_pull(task_ids='generate_report')
         
-        if task_result and task_result.get('status') == 'success':
+        if report_result and report_result.get('status') == 'success':
+            logging.info("📤 전략 보고서 업로드 시작")
+            
+            # strategy_report_uploader.py 모듈 임포트
+            import sys
+            if os.getenv('AIRFLOW__CORE__EXECUTOR'):  # Docker 환경
+                func_dir = '/opt/airflow/func'
+            else:  # 로컬 환경
+                func_dir = os.path.join(os.path.dirname(current_dir), 'func')
+            
+            if func_dir not in sys.path:
+                sys.path.append(func_dir)
+            
+            try:
+                import strategy_report_uploader
+                
+                # 모듈 리로드 (최신 코드 반영)
+                import importlib
+                importlib.reload(strategy_report_uploader)
+                
+                # 전략 보고서 업로드
+                upload_success = strategy_report_uploader.upload_latest_strategy_report()
+                
+                if upload_success:
+                    logging.info("✅ 전략 보고서 업로드 성공")
+                    return {'status': 'success', 'message': '업로드 완료'}
+                else:
+                    logging.error("❌ 전략 보고서 업로드 실패")
+                    return {'status': 'error', 'message': '업로드 실패'}
+                    
+            except ImportError as ie:
+                logging.error(f"❌ strategy_report_uploader 모듈 임포트 실패: {ie}")
+                return {'status': 'error', 'message': f'모듈 임포트 실패: {ie}'}
+            except Exception as ue:
+                logging.error(f"❌ 업로드 과정에서 오류: {ue}")
+                return {'status': 'error', 'message': f'업로드 오류: {ue}'}
+        elif report_result and report_result.get('status') == 'no_data':
+            logging.info("⚠️ 분석할 뉴스 데이터가 없어서 업로드를 건너뜁니다")
+            return {'status': 'skipped', 'message': '분석할 뉴스 데이터 없음'}
+        else:
+            logging.warning("⚠️ 보고서가 생성되지 않아 업로드를 건너뜁니다")
+            return {'status': 'skipped', 'message': '보고서 파일 없음'}
+            
+    except Exception as e:
+        logging.error(f"❌ 업로드 태스크 실행 중 오류: {e}")
+        return {'status': 'error', 'message': str(e)}
+
+def cleanup_report_files(**context):
+    """업로드 성공한 리포트 .md 파일 삭제"""
+    try:
+        # 이전 태스크 결과 가져오기
+        upload_result = context['task_instance'].xcom_pull(task_ids='upload_report')
+        
+        # 업로드가 성공한 경우에만 파일 삭제
+        if upload_result and upload_result.get('status') == 'success':
+            logging.info("🗑️ 리포트 .md 파일 삭제 시작...")
+            
+            # clear_files 모듈 import
+            import sys
+            if os.getenv('AIRFLOW__CORE__EXECUTOR'):  # Docker 환경
+                func_dir = '/opt/airflow/func'
+            else:  # 로컬 환경
+                func_dir = os.path.join(os.path.dirname(current_dir), 'func')
+            
+            if func_dir not in sys.path:
+                sys.path.append(func_dir)
+            
+            from clear_files import clear_excel_files
+            
+            # 리포트 .md 파일 삭제 실행
+            clear_excel_files(file_type='news_report')
+            
+            logging.info("✅ 리포트 .md 파일 삭제 완료")
+            return {'status': 'success', 'message': 'Report files cleaned up successfully'}
+        else:
+            logging.warning("⚠️ 업로드가 성공하지 않아 파일 삭제를 건너뜁니다.")
+            return {'status': 'skipped', 'message': 'Upload was not successful'}
+            
+    except Exception as e:
+        logging.error(f"❌ 리포트 파일 삭제 중 오류: {e}")
+        return {'status': 'error', 'message': str(e)}
+
+def cleanup_medical_files(**context):
+    """Medical 뉴스 Excel 파일 삭제"""
+    try:
+        # 이전 태스크 결과 가져오기 (report 파일 삭제가 성공했을 때만 실행)
+        report_cleanup_result = context['task_instance'].xcom_pull(task_ids='cleanup_report_files')
+        
+        # 이전 삭제가 성공하거나 스킵된 경우 실행
+        if report_cleanup_result and report_cleanup_result.get('status') in ['success', 'skipped']:
+            logging.info("🗑️ Medical 뉴스 Excel 파일 삭제 시작...")
+            
+            # clear_files 모듈 import
+            import sys
+            if os.getenv('AIRFLOW__CORE__EXECUTOR'):  # Docker 환경
+                func_dir = '/opt/airflow/func'
+            else:  # 로컬 환경
+                func_dir = os.path.join(os.path.dirname(current_dir), 'func')
+            
+            if func_dir not in sys.path:
+                sys.path.append(func_dir)
+            
+            from clear_files import clear_excel_files
+            
+            # Medical Excel 파일 삭제 실행
+            clear_excel_files(file_type='medical')
+            
+            logging.info("✅ Medical 뉴스 Excel 파일 삭제 완료")
+            return {'status': 'success', 'message': 'Medical files cleaned up successfully'}
+        else:
+            logging.warning("⚠️ 이전 단계가 완료되지 않아 파일 삭제를 건너뜁니다.")
+            return {'status': 'skipped', 'message': 'Previous cleanup was not completed'}
+            
+    except Exception as e:
+        logging.error(f"❌ Medical 파일 삭제 중 오류: {e}")
+        return {'status': 'error', 'message': str(e)}
+
+def cleanup_newsstand_files(**context):
+    """Newsstand Excel 파일 삭제"""
+    try:
+        # 이전 태스크 결과 가져오기 (medical 파일 삭제가 성공했을 때만 실행)
+        medical_cleanup_result = context['task_instance'].xcom_pull(task_ids='cleanup_medical_files')
+        
+        # 이전 삭제가 성공하거나 스킵된 경우 실행
+        if medical_cleanup_result and medical_cleanup_result.get('status') in ['success', 'skipped']:
+            logging.info("🗑️ Newsstand Excel 파일 삭제 시작...")
+            
+            # clear_files 모듈 import
+            import sys
+            if os.getenv('AIRFLOW__CORE__EXECUTOR'):  # Docker 환경
+                func_dir = '/opt/airflow/func'
+            else:  # 로컬 환경
+                func_dir = os.path.join(os.path.dirname(current_dir), 'func')
+            
+            if func_dir not in sys.path:
+                sys.path.append(func_dir)
+            
+            from clear_files import clear_excel_files
+            
+            # Newsstand Excel 파일 삭제 실행
+            clear_excel_files(file_type='newsstand')
+            
+            logging.info("✅ Newsstand Excel 파일 삭제 완료")
+            return {'status': 'success', 'message': 'Newsstand files cleaned up successfully'}
+        else:
+            logging.warning("⚠️ 이전 단계가 완료되지 않아 파일 삭제를 건너뜁니다.")
+            return {'status': 'skipped', 'message': 'Previous cleanup was not completed'}
+            
+    except Exception as e:
+        logging.error(f"❌ Newsstand 파일 삭제 중 오류: {e}")
+        return {'status': 'error', 'message': str(e)}
+
+def check_and_notify(**context):
+    """보고서 생성 및 업로드 결과 확인"""
+    try:
+        # 이전 태스크 결과 가져오기
+        report_result = context['task_instance'].xcom_pull(task_ids='generate_report')
+        upload_result = context['task_instance'].xcom_pull(task_ids='upload_report')
+        
+        if report_result and report_result.get('status') == 'success':
             logging.info("✅ 보고서 생성 성공")
             
             # 결과 파일 정보
-            result_file = task_result.get('file', 'Unknown')
+            result_file = report_result.get('file', 'Unknown')
             file_name = os.path.basename(result_file) if result_file != 'Unknown' else 'Unknown'
+            
+            # 업로드 결과
+            upload_status = upload_result.get('status', 'unknown') if upload_result else 'unknown'
+            upload_message = upload_result.get('message', '') if upload_result else ''
             
             logging.info(f"📊 실행 정보:")
             logging.info(f"- 실행 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             logging.info(f"- 생성 파일: {file_name}")
             logging.info(f"- 파일 위치: {result_file}")
-            logging.info("✅ 제약영업회사 전략 보고서가 생성되었습니다.")
+            logging.info(f"- 업로드 상태: {upload_status}")
+            if upload_message:
+                logging.info(f"- 업로드 메시지: {upload_message}")
+            logging.info("✅ 제약영업회사 전략 보고서가 생성되고 업로드되었습니다.")
             
-            return {'status': 'success', 'file': result_file}
+            return {
+                'status': 'success', 
+                'file': result_file,
+                'upload_status': upload_status,
+                'upload_message': upload_message
+            }
         else:
             logging.warning("⚠️ 보고서 생성 부분 성공 또는 실패")
             logging.warning(f"실행 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            logging.warning(f"상태: {task_result.get('status', 'Unknown') if task_result else 'Failed'}")
-            logging.warning(f"메시지: {task_result.get('message', 'No message') if task_result else 'Task failed'}")
+            logging.warning(f"상태: {report_result.get('status', 'Unknown') if report_result else 'Failed'}")
+            logging.warning(f"메시지: {report_result.get('message', 'No message') if report_result else 'Task failed'}")
             
-            return {'status': 'warning', 'message': task_result.get('message', 'No message') if task_result else 'Task failed'}
+            return {'status': 'warning', 'message': report_result.get('message', 'No message') if report_result else 'Task failed'}
             
     except Exception as e:
         logging.error(f"❌ 결과 확인 중 오류: {e}")
@@ -217,6 +393,31 @@ generate_report_task = PythonOperator(
     execution_timeout=timedelta(minutes=20)
 )
 
+upload_report_task = PythonOperator(
+    task_id='upload_report',
+    python_callable=upload_strategy_report_to_db,
+    dag=dag,
+    execution_timeout=timedelta(minutes=5)
+)
+
+cleanup_report_files_task = PythonOperator(
+    task_id='cleanup_report_files',
+    python_callable=cleanup_report_files,
+    dag=dag,
+)
+
+cleanup_medical_files_task = PythonOperator(
+    task_id='cleanup_medical_files',
+    python_callable=cleanup_medical_files,
+    dag=dag,
+)
+
+cleanup_newsstand_files_task = PythonOperator(
+    task_id='cleanup_newsstand_files',
+    python_callable=cleanup_newsstand_files,
+    dag=dag,
+)
+
 check_task = PythonOperator(
     task_id='check_result',
     python_callable=check_and_notify,
@@ -224,7 +425,7 @@ check_task = PythonOperator(
 )
 
 # Task 의존성 설정
-generate_report_task >> check_task
+generate_report_task >> upload_report_task >> cleanup_report_files_task >> cleanup_medical_files_task >> cleanup_newsstand_files_task >> check_task
 
 # DAG 문서화
 dag.doc_md = """
@@ -243,7 +444,8 @@ dag.doc_md = """
 1. **뉴스 데이터 분석**: 크롤링된 뉴스 요약들을 통합 분석
 2. **전략 보고서 생성**: OpenAI GPT-4o를 사용한 제약영업 전략 보고서 작성
 3. **마크다운 저장**: 생성된 보고서를 .md 파일로 저장
-4. **실시간 로깅**: 보고서 생성 진행상황을 실시간으로 Airflow 로그에 출력
+4. **데이터베이스 업로드**: 생성된 보고서와 뉴스 제목을 DB에 자동 업로드
+5. **실시간 로깅**: 보고서 생성 및 업로드 진행상황을 실시간으로 Airflow 로그에 출력
 
 ## 입력 데이터
 - `newsstand_iframe_*.json`: KBS/MBC/SBS 뉴스 요약
@@ -252,9 +454,11 @@ dag.doc_md = """
 
 ## 환경 설정
 - `OPENAI_API_KEY`: OpenAI API 키 (필수)
+- `ACCESS_TOKEN`: DB 업로드용 API 인증 토큰 (필수)
 
 ## 산출물
 - `pharmaceutical_strategy_report_YYYYMMDD_HHMMSS.md`: 전략 보고서 파일
+- **데이터베이스 업로드**: FastAPI 백엔드를 통해 DB에 자동 업로드
 
 ## 보고서 구조
 1. Executive Summary

@@ -157,11 +157,29 @@ def collect_recent_news_urls(driver, target_dates=None):
     
     # 대상 날짜 설정
     if target_dates is None:
-        # 기본값: 오늘과 어제 날짜
-        today = datetime.now().date()
-        yesterday = today - timedelta(days=1)
-        target_dates = {today, yesterday}
-        print(f"🎯 기본 대상 날짜: {today.strftime('%Y.%m.%d')} (오늘), {yesterday.strftime('%Y.%m.%d')} (어제)")
+        # TEST_DATE 환경변수 확인
+        import os
+        test_date_env = os.getenv('TEST_DATE')
+        if test_date_env:
+            try:
+                # TEST_DATE 파싱 (형식: 'YYYY-MM-DD')
+                test_date = datetime.strptime(test_date_env, '%Y-%m-%d').date()
+                yesterday = test_date - timedelta(days=1)
+                target_dates = {test_date, yesterday}
+                print(f"🎯 TEST_DATE 사용: {test_date.strftime('%Y.%m.%d')} (지정일), {yesterday.strftime('%Y.%m.%d')} (전일)")
+            except ValueError:
+                print(f"❌ 잘못된 TEST_DATE 형식: {test_date_env}, 현재 날짜 사용")
+                # 기본값: 오늘과 어제 날짜
+                today = datetime.now().date()
+                yesterday = today - timedelta(days=1)
+                target_dates = {today, yesterday}
+                print(f"🎯 기본 대상 날짜: {today.strftime('%Y.%m.%d')} (오늘), {yesterday.strftime('%Y.%m.%d')} (어제)")
+        else:
+            # 기본값: 오늘과 어제 날짜
+            today = datetime.now().date()
+            yesterday = today - timedelta(days=1)
+            target_dates = {today, yesterday}
+            print(f"🎯 기본 대상 날짜: {today.strftime('%Y.%m.%d')} (오늘), {yesterday.strftime('%Y.%m.%d')} (어제)")
     else:
         # 사용자 지정 날짜
         date_strings = [date.strftime('%Y.%m.%d') for date in target_dates]
@@ -873,10 +891,27 @@ def main_with_retry(base_url=None, target_dates=None, max_retries=5):
     
     # 기본 날짜 설정
     if target_dates is None:
-        today = datetime.now().date()
-        yesterday = today - timedelta(days=1)
-        target_dates = {today, yesterday}
-        print(f"📅 기본 날짜 설정: {today.strftime('%Y.%m.%d')} (오늘), {yesterday.strftime('%Y.%m.%d')} (어제)")
+        # TEST_DATE 환경변수 확인
+        import os
+        test_date_env = os.getenv('TEST_DATE')
+        if test_date_env:
+            try:
+                # TEST_DATE 파싱 (형식: 'YYYY-MM-DD')
+                test_date = datetime.strptime(test_date_env, '%Y-%m-%d').date()
+                yesterday = test_date - timedelta(days=1)
+                target_dates = {test_date, yesterday}
+                print(f"📅 TEST_DATE 기본 날짜 설정: {test_date.strftime('%Y.%m.%d')} (지정일), {yesterday.strftime('%Y.%m.%d')} (전일)")
+            except ValueError:
+                print(f"❌ 잘못된 TEST_DATE 형식: {test_date_env}, 현재 날짜 사용")
+                today = datetime.now().date()
+                yesterday = today - timedelta(days=1)
+                target_dates = {today, yesterday}
+                print(f"📅 기본 날짜 설정: {today.strftime('%Y.%m.%d')} (오늘), {yesterday.strftime('%Y.%m.%d')} (어제)")
+        else:
+            today = datetime.now().date()
+            yesterday = today - timedelta(days=1)
+            target_dates = {today, yesterday}
+            print(f"📅 기본 날짜 설정: {today.strftime('%Y.%m.%d')} (오늘), {yesterday.strftime('%Y.%m.%d')} (어제)")
     
     result = None
     for attempt in range(1, max_retries + 1):
@@ -977,11 +1012,29 @@ def main(base_url=None, target_dates=None):
 
 if __name__ == "__main__":
     
-    # 오늘 날짜로 크롤링 (자동으로 어제 날짜도 포함)
+    # 날짜 설정 (TEST_DATE 환경변수 우선)
     base_url = "http://m.yakup.com/news/index.html?cat=11"
-    target_date = datetime.now().date()  # 오늘 날짜
-    yesterday = target_date - timedelta(days=1)  # 어제 날짜 자동 계산
-    target_dates = {target_date, yesterday}
+    
+    # TEST_DATE 환경변수 확인
+    import os
+    test_date_env = os.getenv('TEST_DATE')
+    if test_date_env:
+        try:
+            # TEST_DATE 파싱 (형식: 'YYYY-MM-DD')
+            target_date = datetime.strptime(test_date_env, '%Y-%m-%d').date()
+            yesterday = target_date - timedelta(days=1)
+            target_dates = {target_date, yesterday}
+            print(f"📅 TEST_DATE로 크롤링: {target_date.strftime('%Y.%m.%d')} (지정일), {yesterday.strftime('%Y.%m.%d')} (전일)")
+        except ValueError:
+            print(f"❌ 잘못된 TEST_DATE 형식: {test_date_env}, 현재 날짜 사용")
+            target_date = datetime.now().date()  # 오늘 날짜
+            yesterday = target_date - timedelta(days=1)  # 어제 날짜 자동 계산
+            target_dates = {target_date, yesterday}
+    else:
+        # 오늘 날짜로 크롤링 (자동으로 어제 날짜도 포함)
+        target_date = datetime.now().date()  # 오늘 날짜
+        yesterday = target_date - timedelta(days=1)  # 어제 날짜 자동 계산
+        target_dates = {target_date, yesterday}
     
     print(f"🎯 크롤링 URL: {base_url}")
     print(f"🎯 크롤링 날짜: {target_date.strftime('%Y.%m.%d')} (오늘), {yesterday.strftime('%Y.%m.%d')} (어제)")

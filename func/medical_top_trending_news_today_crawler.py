@@ -629,9 +629,22 @@ def add_summaries(news_list, filter_enabled=False):
 def crawl_yakup_news(target_date=None):
     """약업닷컴 의료뉴스 크롤링 메인 함수"""
     
-    # 기본값: 오늘 날짜
+    # 기본값: 오늘 날짜 (TEST_DATE 환경변수 우선)
     if target_date is None:
-        target_date = datetime.now().strftime('%Y%m%d')
+        # TEST_DATE 환경변수 확인
+        import os
+        test_date_env = os.getenv('TEST_DATE')
+        if test_date_env:
+            try:
+                # TEST_DATE 파싱 (형식: 'YYYY-MM-DD')
+                parsed_date = datetime.strptime(test_date_env, '%Y-%m-%d')
+                target_date = parsed_date.strftime('%Y%m%d')
+                print(f"📅 TEST_DATE 사용: {test_date_env} -> {target_date}")
+            except ValueError:
+                print(f"❌ 잘못된 TEST_DATE 형식: {test_date_env}, 현재 날짜 사용")
+                target_date = datetime.now().strftime('%Y%m%d')
+        else:
+            target_date = datetime.now().strftime('%Y%m%d')
     
     # 날짜 형식 유효성 검사 (YYYYMMDD 형식)
     try:
@@ -842,10 +855,24 @@ def save_to_json(data, filename=None):
 def main_with_retry(target_date=None, max_retries=3):
     """재시도 메커니즘이 포함된 메인 실행 함수"""
     
-    # 사용자 입력 날짜가 있으면 사용, 없으면 오늘 날짜 사용
+    # 사용자 입력 날짜가 있으면 사용, 없으면 TEST_DATE 또는 오늘 날짜 사용
     if target_date is None:
-        target_date = datetime.now().strftime('%Y%m%d')
-        print(f"📅 날짜가 지정되지 않아 오늘 날짜를 사용합니다: {target_date}")
+        # TEST_DATE 환경변수 확인
+        import os
+        test_date_env = os.getenv('TEST_DATE')
+        if test_date_env:
+            try:
+                # TEST_DATE 파싱 (형식: 'YYYY-MM-DD')
+                parsed_date = datetime.strptime(test_date_env, '%Y-%m-%d')
+                target_date = parsed_date.strftime('%Y%m%d')
+                print(f"📅 TEST_DATE 환경변수 사용: {test_date_env} -> {target_date}")
+            except ValueError:
+                print(f"❌ 잘못된 TEST_DATE 형식: {test_date_env}, 현재 날짜 사용")
+                target_date = datetime.now().strftime('%Y%m%d')
+                print(f"📅 날짜가 지정되지 않아 오늘 날짜를 사용합니다: {target_date}")
+        else:
+            target_date = datetime.now().strftime('%Y%m%d')
+            print(f"📅 날짜가 지정되지 않아 오늘 날짜를 사용합니다: {target_date}")
     else:
         print(f"📅 지정된 날짜로 크롤링합니다: {target_date}")
     
@@ -940,8 +967,22 @@ def main_with_retry(target_date=None, max_retries=3):
 
 
 if __name__ == "__main__":
-    # 오늘 날짜로 크롤링
-    target_date = datetime.now().strftime('%Y%m%d')
-    print(f"🎯 설정된 날짜: {target_date}")
+    # 날짜 설정 (TEST_DATE 환경변수 우선)
+    import os
+    test_date_env = os.getenv('TEST_DATE')
+    if test_date_env:
+        try:
+            # TEST_DATE 파싱 (형식: 'YYYY-MM-DD')
+            parsed_date = datetime.strptime(test_date_env, '%Y-%m-%d')
+            target_date = parsed_date.strftime('%Y%m%d')
+            print(f"🎯 TEST_DATE로 설정된 날짜: {test_date_env} -> {target_date}")
+        except ValueError:
+            print(f"❌ 잘못된 TEST_DATE 형식: {test_date_env}, 현재 날짜 사용")
+            target_date = datetime.now().strftime('%Y%m%d')
+            print(f"🎯 설정된 날짜: {target_date}")
+    else:
+        # 오늘 날짜로 크롤링
+        target_date = datetime.now().strftime('%Y%m%d')
+        print(f"🎯 설정된 날짜: {target_date}")
     
     main_with_retry(target_date, max_retries=3)

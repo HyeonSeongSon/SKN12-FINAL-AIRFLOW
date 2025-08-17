@@ -9,6 +9,7 @@ from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 from datetime import datetime, timedelta
 import os
+import sys
 import subprocess
 import logging
 import pendulum
@@ -69,15 +70,15 @@ def run_hira_crawler():
                 import glob
                 # 크롤러가 실제로 저장하는 경로와 일치시킴
                 result_dir = '/home/son/SKN12-FINAL-AIRFLOW/crawler_result'
-                json_files = glob.glob(os.path.join(result_dir, 'hira_data_*.json'))
+                excel_files = glob.glob(os.path.join(result_dir, 'hira_data_*.xlsx'))
                 
-                if json_files:
-                    latest_file = max(json_files, key=os.path.getctime)
+                if excel_files:
+                    latest_file = max(excel_files, key=os.path.getctime)
                     logging.info(f"생성된 파일: {latest_file}")
                     return {'status': 'success', 'file': latest_file, 'output': stdout}
                 else:
-                    logging.warning("JSON 파일이 생성되지 않았습니다.")
-                    return {'status': 'warning', 'message': 'JSON 파일 없음', 'output': stdout}
+                    logging.warning("Excel 파일이 생성되지 않았습니다.")
+                    return {'status': 'warning', 'message': 'Excel 파일 없음', 'output': stdout}
             else:
                 logging.error(f"❌ HIRA 크롤링 실패: {stderr}")
                 raise RuntimeError(f"크롤러 실행 실패: {stderr}")
@@ -90,6 +91,64 @@ def run_hira_crawler():
     except Exception as e:
         logging.error(f"❌ HIRA 크롤러 실행 중 오류: {e}")
         raise
+
+def upload_hira_data(**context):
+    """HIRA 데이터 업로드"""
+    try:
+        # 이전 태스크 결과 가져오기
+        task_result = context['task_instance'].xcom_pull(task_ids='check_result')
+        
+        # 크롤링이 성공한 경우에만 업로드 시도
+        if task_result and task_result.get('status') == 'success':
+            logging.info("📤 HIRA 데이터 업로드 시작...")
+            
+            # hira_data_uploader 모듈 import
+            sys.path.append('/opt/airflow/func')
+            from hira_data_uploader import upload_latest_hira_file
+            
+            # 업로드 실행
+            upload_success = upload_latest_hira_file()
+            
+            if upload_success:
+                logging.info("✅ HIRA 데이터 업로드 성공")
+                return {'status': 'success', 'message': 'Upload completed successfully'}
+            else:
+                logging.error("❌ HIRA 데이터 업로드 실패")
+                return {'status': 'failed', 'message': 'Upload failed'}
+        else:
+            logging.warning("⚠️ 크롤링이 성공하지 않아 업로드를 건너뜁니다.")
+            return {'status': 'skipped', 'message': 'Crawling was not successful'}
+            
+    except Exception as e:
+        logging.error(f"❌ 업로드 중 오류: {e}")
+        return {'status': 'error', 'message': str(e)}
+
+def cleanup_hira_files(**context):
+    """업로드 성공한 HIRA Excel 파일 삭제"""
+    try:
+        # 이전 태스크 결과 가져오기
+        upload_result = context['task_instance'].xcom_pull(task_ids='upload_hira_data')
+        
+        # 업로드가 성공한 경우에만 파일 삭제
+        if upload_result and upload_result.get('status') == 'success':
+            logging.info("🗑️ HIRA Excel 파일 삭제 시작...")
+            
+            # clear_files 모듈 import
+            sys.path.append('/opt/airflow/func')
+            from clear_files import clear_excel_files
+            
+            # HIRA Excel 파일 삭제 실행
+            clear_excel_files(file_type='hira')
+            
+            logging.info("✅ HIRA Excel 파일 삭제 완료")
+            return {'status': 'success', 'message': 'HIRA files cleaned up successfully'}
+        else:
+            logging.warning("⚠️ 업로드가 성공하지 않아 파일 삭제를 건너뜁니다.")
+            return {'status': 'skipped', 'message': 'Upload was not successful'}
+            
+    except Exception as e:
+        logging.error(f"❌ 파일 삭제 중 오류: {e}")
+        return {'status': 'error', 'message': str(e)}
 
 def check_and_notify(**context):
     """크롤링 결과 확인"""
@@ -155,6 +214,18 @@ check_task = PythonOperator(
     dag=dag,
 )
 
+upload_task = PythonOperator(
+    task_id='upload_hira_data',
+    python_callable=upload_hira_data,
+    dag=dag,
+)
+
+cleanup_files_task = PythonOperator(
+    task_id='cleanup_hira_files',
+    python_callable=cleanup_hira_files,
+    dag=dag,
+)
+
 cleanup_task = PythonOperator(
     task_id='cleanup_chrome',
     python_callable=cleanup_chrome_processes,
@@ -163,4 +234,4 @@ cleanup_task = PythonOperator(
 )
 
 # Task 의존성 설정
-crawler_task >> check_task >> cleanup_task
+crawler_task >> check_task >> upload_task >> cleanup_files_task >> cleanup_task

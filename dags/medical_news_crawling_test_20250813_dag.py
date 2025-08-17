@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-의료뉴스 크롤링 DAG
-- recent_news: 최근(오늘/어제) 뉴스 크롤링
-- trending_news: 당일 트렌딩 뉴스 크롤링
-매일 09시와 13시에 두 크롤러를 순차적으로 실행
+의료뉴스 크롤링 테스트 DAG - 2025년 8월 13일 날짜 고정
 """
 
 from airflow import DAG
@@ -51,26 +48,26 @@ local_tz = pendulum.timezone('Asia/Seoul')
 default_args = {
     'owner': 'medical-news-team',
     'depends_on_past': False,
-    'start_date': datetime(2025, 8, 10, 9, 0, tzinfo=local_tz),
+    'start_date': datetime(2025, 8, 17, 9, 0, tzinfo=local_tz),
     'email_on_failure': False,
     'email_on_retry': False,
-    'retries': 2,
-    'retry_delay': timedelta(minutes=10),
-    'catchup': False  # 과거 실행 건너뛰기
+    'retries': 1,
+    'retry_delay': timedelta(minutes=5),
+    'catchup': False
 }
 
 # DAG 정의
 dag = DAG(
-    'medical_news_crawling_v1',
+    'medical_news_crawling_test_20250813',
     default_args=default_args,
-    description='의료뉴스 크롤링 - 최근뉴스 & 트렌딩뉴스',
-    schedule='0 9,13 * * 1-5',
+    description='의료뉴스 크롤링 테스트 - 2025년 8월 13일 날짜 고정',
+    schedule=None,  # 수동 실행
     max_active_runs=1,
-    tags=['medical', 'news', 'crawling', 'sequential']
+    tags=['medical', 'news', 'test', '20250813']
 )
 
-def run_recent_news_crawler():
-    """최근 뉴스 크롤러 실행 함수"""
+def run_recent_news_crawler_test():
+    """최근 뉴스 크롤러 실행 함수 - 2025년 8월 13일 테스트"""
     try:
         # Docker 환경에서는 환경변수가 이미 설정되어 있으므로 로컬에서만 로드
         if not os.getenv('AIRFLOW__CORE__EXECUTOR'):
@@ -102,16 +99,17 @@ def run_recent_news_crawler():
             if not openai_key:
                 raise ValueError("OPENAI_API_KEY 환경변수가 설정되지 않았습니다.")
         
-        logging.info(f"최근 뉴스 크롤러 시작: {crawler_script}")
+        logging.info(f"최근 뉴스 크롤러 시작 (테스트 날짜: 2025-08-13): {crawler_script}")
         
-        # Python 스크립트 실행
+        # Python 스크립트 실행 - 날짜를 환경변수로 전달
         env = os.environ.copy()
-        # Airflow 사용자의 Python 환경 사용
+        env['TEST_DATE'] = '2025-08-13'  # 테스트 날짜 설정
         env['PATH'] = '/home/airflow/.local/bin:' + env.get('PATH', '')
+        
         process = subprocess.Popen(
             ['/home/airflow/.local/bin/python3', '-u', crawler_script],
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # stderr을 stdout과 합침
+            stderr=subprocess.STDOUT,
             text=True,
             cwd='/opt/airflow/func' if os.getenv('AIRFLOW__CORE__EXECUTOR') else os.path.join(os.path.dirname(current_dir), 'func'),
             env=env,
@@ -120,11 +118,10 @@ def run_recent_news_crawler():
         )
         
         # 실시간 로그 출력
-        logging.info("📺 실시간 크롤링 로그 시작...")
+        logging.info("📺 실시간 크롤링 로그 시작 (테스트 날짜: 2025-08-13)...")
         output_lines = []
         
         try:
-            # 실시간으로 출력 읽기
             while True:
                 output = process.stdout.readline()
                 if output == '' and process.poll() is not None:
@@ -132,20 +129,16 @@ def run_recent_news_crawler():
                 if output:
                     line = output.strip()
                     output_lines.append(line)
-                    # Airflow 로그에 실시간 출력
                     logging.info(f"📰 {line}")
             
-            # 프로세스 완료 대기
             process.wait()
             stdout = '\n'.join(output_lines)
             
             if process.returncode == 0:
-                logging.info("✅ 최근 뉴스 크롤링 완료")
-                logging.info("📊 최종 출력 요약 완료")
+                logging.info("✅ 최근 뉴스 크롤링 완료 (테스트)")
                 
                 # 생성된 파일 확인
                 import glob
-                # 크롤러가 실제로 저장하는 경로와 일치시킴
                 result_dir = '/home/son/SKN12-FINAL-AIRFLOW/crawler_result'
                 json_files = glob.glob(os.path.join(result_dir, 'medical_recent_news_*.json'))
                 
@@ -157,13 +150,12 @@ def run_recent_news_crawler():
                     logging.warning("JSON 파일이 생성되지 않았습니다.")
                     return {'status': 'warning', 'message': 'JSON 파일 없음', 'output': stdout}
             else:
-                error_output = '\n'.join(output_lines[-10:])  # 마지막 10줄만 에러로 표시
+                error_output = '\n'.join(output_lines[-10:])
                 logging.error(f"❌ 최근 뉴스 크롤링 실패 (리턴코드: {process.returncode})")
                 logging.error(f"마지막 출력: {error_output}")
                 raise RuntimeError(f"크롤러 실행 실패 (리턴코드: {process.returncode})")
                 
         except Exception as proc_e:
-            # 프로세스가 여전히 실행 중이면 종료
             if process.poll() is None:
                 logging.warning("⏰ 프로세스 강제 종료 중...")
                 process.terminate()
@@ -180,8 +172,8 @@ def run_recent_news_crawler():
         logging.error(f"❌ 최근 뉴스 크롤러 실행 중 오류: {e}")
         raise
 
-def run_trending_news_crawler():
-    """트렌딩 뉴스 크롤러 실행 함수"""
+def run_trending_news_crawler_test():
+    """트렌딩 뉴스 크롤러 실행 함수 - 2025년 8월 13일 테스트"""
     try:
         # Docker 환경에서는 환경변수가 이미 설정되어 있으므로 로컬에서만 로드
         if not os.getenv('AIRFLOW__CORE__EXECUTOR'):
@@ -213,16 +205,17 @@ def run_trending_news_crawler():
             if not openai_key:
                 raise ValueError("OPENAI_API_KEY 환경변수가 설정되지 않았습니다.")
         
-        logging.info(f"트렌딩 뉴스 크롤러 시작: {crawler_script}")
+        logging.info(f"트렌딩 뉴스 크롤러 시작 (테스트 날짜: 2025-08-13): {crawler_script}")
         
-        # Python 스크립트 실행
+        # Python 스크립트 실행 - 날짜를 환경변수로 전달
         env = os.environ.copy()
-        # Airflow 사용자의 Python 환경 사용
+        env['TEST_DATE'] = '2025-08-13'  # 테스트 날짜 설정
         env['PATH'] = '/home/airflow/.local/bin:' + env.get('PATH', '')
+        
         process = subprocess.Popen(
             ['/home/airflow/.local/bin/python3', '-u', crawler_script],
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # stderr을 stdout과 합침
+            stderr=subprocess.STDOUT,
             text=True,
             cwd='/opt/airflow/func' if os.getenv('AIRFLOW__CORE__EXECUTOR') else os.path.join(os.path.dirname(current_dir), 'func'),
             env=env,
@@ -231,11 +224,10 @@ def run_trending_news_crawler():
         )
         
         # 실시간 로그 출력
-        logging.info("📺 실시간 크롤링 로그 시작...")
+        logging.info("📺 실시간 크롤링 로그 시작 (테스트 날짜: 2025-08-13)...")
         output_lines = []
         
         try:
-            # 실시간으로 출력 읽기
             while True:
                 output = process.stdout.readline()
                 if output == '' and process.poll() is not None:
@@ -243,20 +235,16 @@ def run_trending_news_crawler():
                 if output:
                     line = output.strip()
                     output_lines.append(line)
-                    # Airflow 로그에 실시간 출력
                     logging.info(f"📈 {line}")
             
-            # 프로세스 완료 대기
             process.wait()
             stdout = '\n'.join(output_lines)
             
             if process.returncode == 0:
-                logging.info("✅ 트렌딩 뉴스 크롤링 완료")
-                logging.info("📊 최종 출력 요약 완료")
+                logging.info("✅ 트렌딩 뉴스 크롤링 완료 (테스트)")
                 
                 # 생성된 파일 확인
                 import glob
-                # 크롤러가 실제로 저장하는 경로와 일치시킴
                 result_dir = '/home/son/SKN12-FINAL-AIRFLOW/crawler_result'
                 json_files = glob.glob(os.path.join(result_dir, 'medical_top_trending_news_*.json'))
                 
@@ -268,13 +256,12 @@ def run_trending_news_crawler():
                     logging.warning("JSON 파일이 생성되지 않았습니다.")
                     return {'status': 'warning', 'message': 'JSON 파일 없음', 'output': stdout}
             else:
-                error_output = '\n'.join(output_lines[-10:])  # 마지막 10줄만 에러로 표시
+                error_output = '\n'.join(output_lines[-10:])
                 logging.error(f"❌ 트렌딩 뉴스 크롤링 실패 (리턴코드: {process.returncode})")
                 logging.error(f"마지막 출력: {error_output}")
                 raise RuntimeError(f"크롤러 실행 실패 (리턴코드: {process.returncode})")
                 
         except Exception as proc_e:
-            # 프로세스가 여전히 실행 중이면 종료
             if process.poll() is None:
                 logging.warning("⏰ 프로세스 강제 종료 중...")
                 process.terminate()
@@ -296,7 +283,6 @@ def cleanup_chrome_processes():
     try:
         logging.info("🧹 Chrome 프로세스 정리 중...")
         
-        # Chrome 관련 프로세스 종료
         subprocess.run(['pkill', '-f', 'chrome'], capture_output=True, timeout=10)
         subprocess.run(['pkill', '-f', 'chromedriver'], capture_output=True, timeout=10)
         
@@ -311,7 +297,7 @@ def add_delay_between_crawlers():
     """크롤러 간 대기 시간 추가"""
     import time
     try:
-        delay_seconds = 30  # 30초 대기
+        delay_seconds = 30
         logging.info(f"⏰ 크롤러 간 {delay_seconds}초 대기 중...")
         time.sleep(delay_seconds)
         logging.info("✅ 대기 완료, 다음 크롤러 준비됨")
@@ -320,12 +306,14 @@ def add_delay_between_crawlers():
         logging.error(f"❌ 대기 중 오류: {str(e)}")
         return {'status': 'error', 'message': str(e)}
 
-def create_medical_excel_report(**context):
-    """의료뉴스 JSON 데이터를 Excel로 변환"""
+def create_medical_excel_report_test(**context):
+    """테스트 크롤링 결과로 Medical Excel 파일 생성"""
     try:
+        logging.info("📊 Medical Excel 파일 생성 시작 (테스트)")
+        
         # 이전 태스크 결과 가져오기
-        recent_result = context['task_instance'].xcom_pull(task_ids='crawl_recent_news')
-        trending_result = context['task_instance'].xcom_pull(task_ids='crawl_trending_news')
+        recent_result = context['task_instance'].xcom_pull(task_ids='crawl_recent_news_test')
+        trending_result = context['task_instance'].xcom_pull(task_ids='crawl_trending_news_test')
         
         # 최소 하나의 크롤링이 성공했는지 확인
         success_count = 0
@@ -335,7 +323,7 @@ def create_medical_excel_report(**context):
             success_count += 1
             
         if success_count > 0:
-            logging.info(f"📊 Excel 파일 생성 시작 (성공한 크롤링: {success_count}/2개)")
+            logging.info(f"📊 Excel 파일 생성 시작 (성공한 크롤링: {success_count}/2개, 테스트)")
             
             # medical_news_preprocessing.py 임포트
             import sys
@@ -359,40 +347,42 @@ def create_medical_excel_report(**context):
                 result_df = medical_news_preprocessing.preprocess_medical_news()
                 
                 if result_df is not None and len(result_df) > 0:
-                    logging.info(f"✅ Excel 파일 생성 완료: {len(result_df)}개 고유 기사 처리")
-                    return {'status': 'success', 'processed_count': len(result_df)}
+                    logging.info(f"✅ Excel 파일 생성 완료 (테스트): {len(result_df)}개 고유 기사 처리")
+                    return {'status': 'success', 'processed_count': len(result_df), 'test_date': '2025-08-13'}
                 else:
-                    logging.warning("⚠️ Excel 파일 생성됨, 하지만 고유한 새 데이터가 없음")
-                    return {'status': 'warning', 'message': '새로운 고유 데이터 없음'}
+                    logging.warning("⚠️ Excel 파일 생성됨, 하지만 고유한 새 데이터가 없음 (테스트)")
+                    return {'status': 'warning', 'message': '새로운 고유 데이터 없음', 'test_date': '2025-08-13'}
                     
             except ImportError as e:
                 logging.error(f"❌ 모듈 임포트 실패: {e}")
                 return {'status': 'error', 'message': f'모듈 임포트 실패: {e}'}
             except Exception as e:
-                logging.error(f"❌ Excel 파일 생성 실패: {e}")
-                return {'status': 'error', 'message': f'Excel 생성 실패: {e}'}
-                
+                logging.error(f"❌ Excel 생성 과정에서 오류: {e}")
+                return {'status': 'error', 'message': f'Excel 생성 오류: {e}'}
         else:
-            logging.warning("⚠️ 모든 크롤링이 실패하여 Excel 생성을 건너뜁니다.")
-            return {'status': 'skipped', 'message': '크롤링 실패로 건너뜀'}
-            
+            logging.warning("⚠️ 성공한 크롤링이 없어 Excel 파일을 생성하지 않습니다 (테스트)")
+            return {'status': 'skipped', 'message': '크롤링 실패로 Excel 생성 생략', 'test_date': '2025-08-13'}
+        
     except Exception as e:
         logging.error(f"❌ Excel 생성 태스크 실행 중 오류: {e}")
         return {'status': 'error', 'message': str(e)}
 
-
-def upload_medical_excel_to_db(**context):
-    """생성된 Medical Excel 파일을 데이터베이스에 업로드"""
+def upload_medical_excel_to_db_test(**context):
+    """생성된 Medical Excel 파일을 데이터베이스에 업로드 (테스트)"""
     try:
         # 이전 태스크 결과 가져오기
-        excel_result = context['task_instance'].xcom_pull(task_ids='create_medical_excel')
+        excel_result = context['task_instance'].xcom_pull(task_ids='create_medical_excel_test')
         
         if excel_result and excel_result.get('status') == 'success':
-            logging.info("📤 Medical Excel 파일 업로드 시작")
+            logging.info("📤 Medical Excel 파일 업로드 시작 (테스트)")
             
             # newsstand_iframe_uploader.py 모듈 임포트
             import sys
-            func_dir = '/opt/airflow/func' if os.getenv('AIRFLOW__CORE__EXECUTOR') else os.path.join(os.path.dirname(current_dir), 'func')
+            if os.getenv('AIRFLOW__CORE__EXECUTOR'):  # Docker 환경
+                func_dir = '/opt/airflow/func'
+            else:  # 로컬 환경
+                func_dir = os.path.join(os.path.dirname(current_dir), 'func')
+            
             if func_dir not in sys.path:
                 sys.path.append(func_dir)
             
@@ -407,32 +397,31 @@ def upload_medical_excel_to_db(**context):
                 upload_success = newsstand_iframe_uploader.upload_latest_file(file_type='medical')
                 
                 if upload_success:
-                    logging.info("✅ Medical Excel 파일 업로드 성공")
-                    return {'status': 'success', 'message': '업로드 완료'}
+                    logging.info("✅ Medical Excel 파일 업로드 성공 (테스트)")
+                    return {'status': 'success', 'message': '업로드 완료', 'test_date': '2025-08-13'}
                 else:
-                    logging.error("❌ Medical Excel 파일 업로드 실패")
+                    logging.error("❌ Medical Excel 파일 업로드 실패 (테스트)")
                     return {'status': 'error', 'message': '업로드 실패'}
                     
-            except ImportError as e:
-                logging.error(f"❌ 업로더 모듈 임포트 실패: {e}")
-                return {'status': 'error', 'message': f'모듈 임포트 실패: {e}'}
-            except Exception as e:
-                logging.error(f"❌ Medical Excel 파일 업로드 실패: {e}")
-                return {'status': 'error', 'message': f'업로드 실패: {e}'}
-                
+            except ImportError as ie:
+                logging.error(f"❌ newsstand_iframe_uploader 모듈 임포트 실패: {ie}")
+                return {'status': 'error', 'message': f'모듈 임포트 실패: {ie}'}
+            except Exception as ue:
+                logging.error(f"❌ 업로드 과정에서 오류: {ue}")
+                return {'status': 'error', 'message': f'업로드 오류: {ue}'}
         else:
-            logging.warning("⚠️ Medical Excel 생성이 성공하지 않아 업로드를 건너뜁니다.")
-            return {'status': 'skipped', 'message': 'Excel 생성 실패로 건너뜀'}
+            logging.warning("⚠️ Excel 파일이 생성되지 않아 업로드를 건너뜁니다")
+            return {'status': 'skipped', 'message': 'Excel 파일 없음'}
             
     except Exception as e:
-        logging.error(f"❌ Medical Excel 업로드 태스크 실행 중 오류: {e}")
+        logging.error(f"❌ 업로드 태스크 실행 중 오류: {e}")
         return {'status': 'error', 'message': str(e)}
 
 def cleanup_medical_recent_json_files(**context):
     """업로드 성공한 medical_recent JSON 파일 정리 (최신 4개만 유지)"""
     try:
         # 이전 태스크 결과 가져오기
-        upload_result = context['task_instance'].xcom_pull(task_ids='upload_medical_excel')
+        upload_result = context['task_instance'].xcom_pull(task_ids='upload_medical_excel_test')
         
         # 업로드가 성공한 경우에만 파일 정리
         if upload_result and upload_result.get('status') == 'success':
@@ -460,7 +449,7 @@ def cleanup_medical_trending_json_files(**context):
     """업로드 성공한 medical_trending JSON 파일 정리 (최신 4개만 유지)"""
     try:
         # 이전 태스크 결과 가져오기 (recent 파일 정리가 성공했을 때만 실행)
-        recent_cleanup_result = context['task_instance'].xcom_pull(task_ids='cleanup_medical_recent_json')
+        recent_cleanup_result = context['task_instance'].xcom_pull(task_ids='cleanup_medical_recent_json_test')
         
         # 이전 정리가 성공하거나 스킵된 경우 실행
         if recent_cleanup_result and recent_cleanup_result.get('status') in ['success', 'skipped']:
@@ -484,17 +473,16 @@ def cleanup_medical_trending_json_files(**context):
         logging.error(f"❌ Medical Trending JSON 파일 정리 중 오류: {e}")
         return {'status': 'error', 'message': str(e)}
 
-
-def aggregate_results(**context):
-    """크롤링 결과 집계"""
+def aggregate_test_results(**context):
+    """테스트 크롤링 결과 집계"""
     try:
-        logging.info("📊 크롤링 결과 집계 중...")
+        logging.info("📊 테스트 크롤링 결과 집계 중...")
         
         # XCom에서 결과 가져오기
-        recent_result = context['task_instance'].xcom_pull(task_ids='crawl_recent_news')
-        trending_result = context['task_instance'].xcom_pull(task_ids='crawl_trending_news')
-        excel_result = context['task_instance'].xcom_pull(task_ids='create_medical_excel')
-        upload_result = context['task_instance'].xcom_pull(task_ids='upload_medical_excel')
+        recent_result = context['task_instance'].xcom_pull(task_ids='crawl_recent_news_test')
+        trending_result = context['task_instance'].xcom_pull(task_ids='crawl_trending_news_test')
+        excel_result = context['task_instance'].xcom_pull(task_ids='create_medical_excel_test')
+        upload_result = context['task_instance'].xcom_pull(task_ids='upload_medical_excel_test')
         
         total_files = 0
         recent_file = None
@@ -523,14 +511,19 @@ def aggregate_results(**context):
         upload_message = upload_result.get('message', '') if upload_result else ''
         
         logging.info(f"🎯 성공한 크롤링: {total_files}/2개")
-        logging.info(f"📊 Excel 생성: {excel_status} ({excel_count}개 고유 기사 처리)")
-        logging.info(f"📤 DB 업로드: {upload_status} ({upload_message})")
-        logging.info(f"📊 실행 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logging.info(f"📊 Excel 생성 상태: {excel_status}")
+        logging.info(f"📤 DB 업로드 상태: {upload_status}")
+        if excel_count > 0:
+            logging.info(f"📊 처리된 뉴스 수: {excel_count}개")
+        if upload_message:
+            logging.info(f"📤 업로드 메시지: {upload_message}")
+        logging.info(f"📊 테스트 실행 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logging.info(f"📅 테스트 대상 날짜: 2025-08-13")
         
         if total_files > 0:
-            logging.info("✅ 의료뉴스 크롤링 완료!")
+            logging.info("✅ 의료뉴스 테스트 크롤링 완료!")
         else:
-            logging.warning("⚠️ 모든 크롤링이 실패했습니다!")
+            logging.warning("⚠️ 모든 테스트 크롤링이 실패했습니다!")
         
         return {
             'total_successful': total_files,
@@ -540,12 +533,13 @@ def aggregate_results(**context):
             'excel_count': excel_count,
             'upload_status': upload_status,
             'upload_message': upload_message,
+            'test_date': '2025-08-13',
             'timestamp': datetime.now().isoformat(),
             'status': 'completed' if total_files > 0 else 'failed'
         }
         
     except Exception as e:
-        logging.error(f"❌ 결과 집계 중 오류: {str(e)}")
+        logging.error(f"❌ 테스트 결과 집계 중 오류: {str(e)}")
         raise
 
 # Task 정의
@@ -558,10 +552,10 @@ cleanup_start = PythonOperator(
     execution_timeout=timedelta(minutes=5)
 )
 
-# 최근 뉴스 크롤링
-crawl_recent_news = PythonOperator(
-    task_id='crawl_recent_news',
-    python_callable=run_recent_news_crawler,
+# 최근 뉴스 크롤링 (테스트)
+crawl_recent_news_test = PythonOperator(
+    task_id='crawl_recent_news_test',
+    python_callable=run_recent_news_crawler_test,
     dag=dag,
     execution_timeout=timedelta(minutes=30)
 )
@@ -574,46 +568,46 @@ delay_task = PythonOperator(
     execution_timeout=timedelta(minutes=2)
 )
 
-# 트렌딩 뉴스 크롤링
-crawl_trending_news = PythonOperator(
-    task_id='crawl_trending_news',
-    python_callable=run_trending_news_crawler,
+# 트렌딩 뉴스 크롤링 (테스트)
+crawl_trending_news_test = PythonOperator(
+    task_id='crawl_trending_news_test',
+    python_callable=run_trending_news_crawler_test,
     dag=dag,
     execution_timeout=timedelta(minutes=30)
 )
 
-# Excel 파일 생성
-create_excel_task = PythonOperator(
-    task_id='create_medical_excel',
-    python_callable=create_medical_excel_report,
+# Excel 파일 생성 (테스트)
+create_excel_test_task = PythonOperator(
+    task_id='create_medical_excel_test',
+    python_callable=create_medical_excel_report_test,
     dag=dag,
     execution_timeout=timedelta(minutes=10)
 )
 
-# Medical Excel 파일 업로드
-upload_medical_excel_task = PythonOperator(
-    task_id='upload_medical_excel',
-    python_callable=upload_medical_excel_to_db,
+# Medical Excel 파일 업로드 (테스트)
+upload_medical_excel_test_task = PythonOperator(
+    task_id='upload_medical_excel_test',
+    python_callable=upload_medical_excel_to_db_test,
     dag=dag,
     execution_timeout=timedelta(minutes=5)
 )
 
-cleanup_recent_json_task = PythonOperator(
-    task_id='cleanup_medical_recent_json',
+cleanup_recent_json_test_task = PythonOperator(
+    task_id='cleanup_medical_recent_json_test',
     python_callable=cleanup_medical_recent_json_files,
     dag=dag,
 )
 
-cleanup_trending_json_task = PythonOperator(
-    task_id='cleanup_medical_trending_json',
+cleanup_trending_json_test_task = PythonOperator(
+    task_id='cleanup_medical_trending_json_test',
     python_callable=cleanup_medical_trending_json_files,
     dag=dag,
 )
 
 # 결과 집계
 aggregate_task = PythonOperator(
-    task_id='aggregate_results',
-    python_callable=aggregate_results,
+    task_id='aggregate_test_results',
+    python_callable=aggregate_test_results,
     dag=dag,
     execution_timeout=timedelta(minutes=5)
 )
@@ -626,55 +620,45 @@ cleanup_end = PythonOperator(
     execution_timeout=timedelta(minutes=5)
 )
 
-# Task 의존성 설정 - 순차적 실행 (Excel 생성 및 업로드 추가)
-cleanup_start >> crawl_recent_news >> delay_task >> crawl_trending_news >> create_excel_task >> upload_medical_excel_task >> cleanup_recent_json_task >> cleanup_trending_json_task >> aggregate_task >> cleanup_end
+# Task 의존성 설정 - Excel 생성 및 DB 업로드 추가
+cleanup_start >> crawl_recent_news_test >> delay_task >> crawl_trending_news_test >> create_excel_test_task >> upload_medical_excel_test_task >> cleanup_recent_json_test_task >> cleanup_trending_json_test_task >> aggregate_task >> cleanup_end
 
 # DAG 문서화
 dag.doc_md = """
-# 의료뉴스 크롤링 DAG
+# 의료뉴스 크롤링 테스트 DAG - 2025년 8월 13일
 
 ## 개요
-이 DAG는 약업닷컴에서 의료뉴스를 수집하고 AI 요약을 생성합니다.
+이 DAG는 2025년 8월 13일 날짜로 의료뉴스 크롤링을 테스트합니다.
 
-## 실행 일정
-- **월요일~금요일 09:00, 13:00** (Asia/Seoul 기준)
-- 주말 제외 평일만 실행
-- 한 번에 하나의 DAG 인스턴스만 실행
+## 테스트 설정
+- **테스트 날짜**: 2025년 8월 13일 (환경변수 TEST_DATE로 전달)
+- **실행 방식**: 수동 실행 (schedule=None)
+- **대상**: 최근 뉴스 + 트렌딩 뉴스
 
 ## 주요 기능
-1. **최근 뉴스 수집**: 오늘/어제 뉴스 크롤링 (날짜 기반 필터링)
-2. **트렌딩 뉴스 수집**: 당일 트렌딩 뉴스 크롤링 (최근 뉴스 완료 후 실행)
+1. **최근 뉴스 수집**: 2025-08-13 날짜 뉴스 크롤링
+2. **트렌딩 뉴스 수집**: 2025-08-13 날짜 트렌딩 뉴스 크롤링
 3. **AI 요약**: OpenAI GPT-4o를 사용한 뉴스 요약 생성
-4. **Excel 변환**: JSON 데이터를 Excel로 변환하며 중복 제거 및 고유 기사만 추출
-5. **결과 저장**: JSON 및 Excel 형태로 파일 저장
-6. **실시간 로깅**: 크롤링 진행상황을 실시간으로 Airflow 로그에 출력
-7. **순차 실행**: 리소스 경합을 방지하기 위해 크롤러들을 순차적으로 실행
-
-## 환경 설정
-- `OPENAI_API_KEY`: OpenAI API 키 (필수)
-- Chrome/ChromeDriver 설치 필요
-- `openpyxl` 패키지 필요 (Excel 생성용)
-
-## 산출물
-- `medical_recent_news_YYYYMMDD_HHMMSS.json`: 최근 뉴스 크롤링 결과
-- `medical_top_trending_news_YYYYMMDD_HHMMSS.json`: 트렌딩 뉴스 크롤링 결과
-- `medical_news_unique_YYYYMMDD_HHMMSS.xlsx`: 고유한 새 기사만 포함한 Excel 파일
+4. **순차 실행**: 리소스 경합 방지를 위한 순차 실행
 
 ## Task 순서
 1. `cleanup_chrome_start`: Chrome 프로세스 정리
-2. `crawl_recent_news`: 최근 뉴스 크롤링
+2. `crawl_recent_news_test`: 최근 뉴스 크롤링 (2025-08-13)
 3. `delay_between_crawlers`: 크롤러 간 대기 (30초)
-4. `crawl_trending_news`: 트렌딩 뉴스 크롤링
-5. `create_medical_excel`: Excel 파일 생성 (중복 제거)
-6. `upload_medical_excel`: Excel 파일을 데이터베이스에 업로드
-7. `aggregate_results`: 전체 결과 집계
+4. `crawl_trending_news_test`: 트렌딩 뉴스 크롤링 (2025-08-13)
+5. `create_medical_excel_test`: 크롤링 결과로 Excel 파일 생성
+6. `upload_medical_excel_test`: Excel 파일을 데이터베이스에 업로드
+7. `aggregate_test_results`: 테스트 결과 집계
 8. `cleanup_chrome_end`: Chrome 프로세스 정리
 
-## 실시간 로깅
-각 크롤러의 진행상황을 실시간으로 확인할 수 있습니다:
-- 🏁 크롤링 시작 알림
-- 📰 최근 뉴스: 개별 뉴스 수집 진행상황 
-- 📈 트렌딩 뉴스: 개별 뉴스 수집 진행상황
-- ✅ 성공/❌ 실패 상태 실시간 업데이트
-- 🔄 재시도 메커니즘 진행상황
+## 환경 설정
+- `OPENAI_API_KEY`: OpenAI API 키 (필수)
+- `ACCESS_TOKEN`: DB 업로드용 API 인증 토큰 (필수)
+- `TEST_DATE`: 2025-08-13 (자동 설정)
+
+## 산출물
+- `medical_recent_news_YYYYMMDD_HHMMSS.json`: 최근 뉴스 테스트 결과
+- `medical_top_trending_news_YYYYMMDD_HHMMSS.json`: 트렌딩 뉴스 테스트 결과
+- `medical_news_unique_YYYYMMDD_HHMMSS.xlsx`: 통합 Excel 보고서
+- **데이터베이스 업로드**: FastAPI 백엔드를 통해 DB에 자동 업로드
 """

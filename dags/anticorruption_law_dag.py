@@ -158,6 +158,67 @@ def create_excel_file(**context):
         logging.error(f"Excel 파일 생성 중 오류: {str(e)}")
         raise
 
+def upload_anticorruption_data(**context):
+    """청탁금지법 처리된 데이터 업로드"""
+    try:
+        # 이전 태스크 결과 확인
+        should_upload = context['task_instance'].xcom_pull(task_ids='delete_old_files')
+        
+        if should_upload:
+            logging.info("📤 청탁금지법 데이터 업로드 시작...")
+            
+            # func 디렉토리 경로 설정
+            func_dir = os.path.join(os.path.dirname(current_dir), 'func')
+            sys.path.append(func_dir)
+            
+            from anticorruption_law_uploader import upload_latest_anticorruption_file
+            
+            # 파일 업로드
+            result = upload_latest_anticorruption_file()
+            
+            if result:
+                logging.info("✅ 청탁금지법 데이터 업로드 성공!")
+                return {'status': 'success', 'message': 'Upload completed successfully'}
+            else:
+                logging.error("❌ 청탁금지법 데이터 업로드 실패")
+                return {'status': 'failed', 'message': 'Upload failed'}
+        else:
+            logging.info("변경사항이 없어 업로드를 건너뜁니다.")
+            return {'status': 'skipped', 'message': 'No changes detected, upload skipped'}
+            
+    except Exception as e:
+        logging.error(f"청탁금지법 데이터 업로드 중 오류: {str(e)}")
+        raise
+
+def clear_anticorruption_excel_files(**context):
+    """청탁금지법 Excel 파일 정리"""
+    try:
+        # 이전 태스크 결과 확인
+        upload_result = context['task_instance'].xcom_pull(task_ids='upload_anticorruption_data')
+        
+        # 업로드가 성공한 경우에만 Excel 파일 삭제
+        if upload_result and upload_result.get('status') == 'success':
+            logging.info("🗑️ 업로드 성공 후 청탁금지법 Excel 파일 정리 시작...")
+            
+            # func 디렉토리 경로 설정
+            func_dir = os.path.join(os.path.dirname(current_dir), 'func')
+            sys.path.append(func_dir)
+            
+            from clear_files import clear_excel_files
+            
+            # law 타입 Excel 파일 삭제
+            clear_excel_files('law')
+            
+            logging.info("✅ 청탁금지법 Excel 파일 정리 완료!")
+            return {'status': 'success', 'message': 'Excel files cleared successfully'}
+        else:
+            logging.info("⚠️ 업로드가 성공하지 않아 Excel 파일 정리를 건너뜁니다.")
+            return {'status': 'skipped', 'message': 'Upload was not successful, file cleanup skipped'}
+            
+    except Exception as e:
+        logging.error(f"❌ Excel 파일 정리 중 오류: {str(e)}")
+        return {'status': 'error', 'message': str(e)}
+
 def process_law_files():
     """법률 파일 처리 (변경사항 확인 및 파일 정리) - 기존 호환성 유지"""
     try:
@@ -229,7 +290,21 @@ excel_task = PythonOperator(
     dag=dag
 )
 
-# 태스크 5: 기존 법률 파일 처리 (호환성 유지)
+# 태스크 5: 청탁금지법 데이터 업로드
+upload_task = PythonOperator(
+    task_id='upload_anticorruption_data',
+    python_callable=upload_anticorruption_data,
+    dag=dag
+)
+
+# 태스크 6: 청탁금지법 Excel 파일 정리
+clear_excel_task = PythonOperator(
+    task_id='clear_excel_files',
+    python_callable=clear_anticorruption_excel_files,
+    dag=dag
+)
+
+# 태스크 7: 기존 법률 파일 처리 (호환성 유지)
 process_task = PythonOperator(
     task_id='process_law_files',
     python_callable=process_law_files,
@@ -237,4 +312,4 @@ process_task = PythonOperator(
 )
 
 # 태스크 의존성 설정
-crawl_task >> check_changes_task >> delete_files_task >> excel_task >> process_task
+crawl_task >> check_changes_task >> delete_files_task >> excel_task >> upload_task >> clear_excel_task >> process_task

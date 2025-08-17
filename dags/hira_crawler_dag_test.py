@@ -176,6 +176,64 @@ if __name__ == "__main__":
         if os.path.exists('/opt/airflow/func/hira_test_runner.py'):
             os.remove('/opt/airflow/func/hira_test_runner.py')
 
+def upload_hira_test_data(**context):
+    """테스트 HIRA 데이터 업로드"""
+    try:
+        # 이전 태스크 결과 가져오기
+        task_result = context['task_instance'].xcom_pull(task_ids='check_test_result')
+        
+        # 크롤링이 성공한 경우에만 업로드 시도
+        if task_result and task_result.get('status') == 'success':
+            logging.info("📤 테스트 HIRA 데이터 업로드 시작...")
+            
+            # hira_data_uploader 모듈 import
+            sys.path.append('/opt/airflow/func')
+            from hira_data_uploader import upload_latest_hira_file
+            
+            # 업로드 실행
+            upload_success = upload_latest_hira_file()
+            
+            if upload_success:
+                logging.info("✅ 테스트 HIRA 데이터 업로드 성공")
+                return {'status': 'success', 'message': 'Test upload completed successfully'}
+            else:
+                logging.error("❌ 테스트 HIRA 데이터 업로드 실패")
+                return {'status': 'failed', 'message': 'Test upload failed'}
+        else:
+            logging.warning("⚠️ 테스트 크롤링이 성공하지 않아 업로드를 건너뜁니다.")
+            return {'status': 'skipped', 'message': 'Test crawling was not successful'}
+            
+    except Exception as e:
+        logging.error(f"❌ 테스트 업로드 중 오류: {e}")
+        return {'status': 'error', 'message': str(e)}
+
+def cleanup_hira_test_files(**context):
+    """업로드 성공한 테스트 HIRA Excel 파일 삭제"""
+    try:
+        # 이전 태스크 결과 가져오기
+        upload_result = context['task_instance'].xcom_pull(task_ids='upload_test_hira_data')
+        
+        # 업로드가 성공한 경우에만 파일 삭제
+        if upload_result and upload_result.get('status') == 'success':
+            logging.info("🗑️ 테스트 HIRA Excel 파일 삭제 시작...")
+            
+            # clear_files 모듈 import
+            sys.path.append('/opt/airflow/func')
+            from clear_files import clear_excel_files
+            
+            # HIRA Excel 파일 삭제 실행
+            clear_excel_files(file_type='hira')
+            
+            logging.info("✅ 테스트 HIRA Excel 파일 삭제 완료")
+            return {'status': 'success', 'message': 'Test HIRA files cleaned up successfully'}
+        else:
+            logging.warning("⚠️ 업로드가 성공하지 않아 파일 삭제를 건너뜁니다.")
+            return {'status': 'skipped', 'message': 'Upload was not successful'}
+            
+    except Exception as e:
+        logging.error(f"❌ 테스트 파일 삭제 중 오류: {e}")
+        return {'status': 'error', 'message': str(e)}
+
 def check_test_result(**context):
     """테스트 크롤링 결과 확인"""
     try:
@@ -224,5 +282,17 @@ check_test_task = PythonOperator(
     dag=dag,
 )
 
+upload_test_task = PythonOperator(
+    task_id='upload_test_hira_data',
+    python_callable=upload_hira_test_data,
+    dag=dag,
+)
+
+cleanup_test_files_task = PythonOperator(
+    task_id='cleanup_test_hira_files',
+    python_callable=cleanup_hira_test_files,
+    dag=dag,
+)
+
 # Task 의존성 설정
-test_crawler_task >> check_test_task
+test_crawler_task >> check_test_task >> upload_test_task >> cleanup_test_files_task

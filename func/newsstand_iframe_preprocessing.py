@@ -89,8 +89,14 @@ def preprocess_newsstand_iframe():
             
             # URL과 title이 모두 일치하는 조합이 기존에 없는 경우만 포함
             if current_pair not in existing_url_title_pairs:
+                # title이 1000자를 넘는 경우 \n을 기준으로 split하고 첫 번째 부분만 사용
+                display_title = title
+                if len(title) > 1000:
+                    split_parts = title.split('\n')
+                    display_title = split_parts[0] if split_parts else title
+                
                 processed_item = {
-                    '제목': title,
+                    '제목': display_title,
                     'url': url,
                     '언론사': item.get('press', ''),
                     '업로드_날짜': item.get('pub_time', ''),

@@ -251,12 +251,87 @@ def create_excel_report(**context):
         return {'status': 'error', 'message': str(e)}
 
 
+def upload_excel_to_db(**context):
+    """생성된 Excel 파일을 데이터베이스에 업로드"""
+    try:
+        # 이전 태스크 결과 가져오기
+        excel_result = context['task_instance'].xcom_pull(task_ids='prepro_and_create_excel')
+        
+        if excel_result and excel_result.get('status') == 'success':
+            logging.info("📤 Excel 파일 업로드 시작")
+            
+            # newsstand_iframe_uploader.py 모듈 임포트
+            func_dir = '/opt/airflow/func' if os.getenv('AIRFLOW__CORE__EXECUTOR') else os.path.join(os.path.dirname(current_dir), 'func')
+            if func_dir not in sys.path:
+                sys.path.append(func_dir)
+            
+            try:
+                import newsstand_iframe_uploader
+                
+                # 모듈 리로드 (최신 코드 반영)
+                import importlib
+                importlib.reload(newsstand_iframe_uploader)
+                
+                # newsstand 타입으로 업로드
+                upload_success = newsstand_iframe_uploader.upload_latest_file(file_type='newsstand')
+                
+                if upload_success:
+                    logging.info("✅ Excel 파일 업로드 성공")
+                    return {'status': 'success', 'message': '업로드 완료'}
+                else:
+                    logging.error("❌ Excel 파일 업로드 실패")
+                    return {'status': 'error', 'message': '업로드 실패'}
+                    
+            except ImportError as e:
+                logging.error(f"❌ 업로더 모듈 임포트 실패: {e}")
+                return {'status': 'error', 'message': f'모듈 임포트 실패: {e}'}
+            except Exception as e:
+                logging.error(f"❌ Excel 파일 업로드 실패: {e}")
+                return {'status': 'error', 'message': f'업로드 실패: {e}'}
+                
+        else:
+            logging.warning("⚠️ Excel 생성이 성공하지 않아 업로드를 건너뜁니다.")
+            return {'status': 'skipped', 'message': 'Excel 생성 실패로 건너뜀'}
+            
+    except Exception as e:
+        logging.error(f"❌ Excel 업로드 태스크 실행 중 오류: {e}")
+        return {'status': 'error', 'message': str(e)}
+
+def cleanup_newsstand_json_files(**context):
+    """업로드 성공한 newsstand JSON 파일 정리 (최신 4개만 유지)"""
+    try:
+        # 이전 태스크 결과 가져오기
+        upload_result = context['task_instance'].xcom_pull(task_ids='upload_excel')
+        
+        # 업로드가 성공한 경우에만 파일 정리
+        if upload_result and upload_result.get('status') == 'success':
+            logging.info("🗑️ Newsstand JSON 파일 정리 시작...")
+            
+            # clear_files 모듈 import
+            sys.path.append('/opt/airflow/func')
+            from clear_files import clear_json_files
+            
+            # newsstand JSON 파일 정리 실행 (최신 4개만 유지)
+            clear_json_files(file_type='newsstand')
+            
+            logging.info("✅ Newsstand JSON 파일 정리 완료")
+            return {'status': 'success', 'message': 'Newsstand JSON files cleaned up successfully'}
+        else:
+            logging.warning("⚠️ 업로드가 성공하지 않아 파일 정리를 건너뜁니다.")
+            return {'status': 'skipped', 'message': 'Upload was not successful'}
+            
+    except Exception as e:
+        logging.error(f"❌ Newsstand JSON 파일 정리 중 오류: {e}")
+        return {'status': 'error', 'message': str(e)}
+
+
 def check_and_notify(**context):
     """크롤링 결과 확인"""
     try:
         # 이전 태스크 결과 가져오기
         crawler_result = context['task_instance'].xcom_pull(task_ids='run_crawler')
         excel_result = context['task_instance'].xcom_pull(task_ids='prepro_and_create_excel')
+        upload_result = context['task_instance'].xcom_pull(task_ids='upload_excel')
         
         if crawler_result and crawler_result.get('status') == 'success':
             logging.info("✅ 크롤링 성공")
@@ -269,15 +344,20 @@ def check_and_notify(**context):
             excel_status = excel_result.get('status', 'unknown') if excel_result else 'unknown'
             excel_count = excel_result.get('processed_count', 0) if excel_result else 0
             
+            # 업로드 결과
+            upload_status = upload_result.get('status', 'unknown') if upload_result else 'unknown'
+            upload_message = upload_result.get('message', '') if upload_result else ''
+            
             logging.info(f"📊 실행 정보:")
             logging.info(f"- 실행 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             logging.info(f"- 생성 파일: {file_name}")
             logging.info(f"- 대상 언론사: KBS, MBC, SBS")
             logging.info(f"- 파일 위치: {result_file}")
             logging.info(f"- Excel 생성: {excel_status} ({excel_count}개 기사 처리)")
+            logging.info(f"- DB 업로드: {upload_status} ({upload_message})")
             logging.info("✅ 모든 뉴스에 대한 AI 요약이 생성되었습니다.")
             
-            return {'status': 'success', 'file': result_file, 'excel_status': excel_status, 'excel_count': excel_count}
+            return {'status': 'success', 'file': result_file, 'excel_status': excel_status, 'excel_count': excel_count, 'upload_status': upload_status}
         else:
             logging.warning("⚠️ 크롤링 부분 성공 또는 실패")
             logging.warning(f"실행 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -307,6 +387,19 @@ prepro_and_create_excel_task = PythonOperator(
     execution_timeout=timedelta(minutes=10)
 )
 
+upload_excel_task = PythonOperator(
+    task_id='upload_excel',
+    python_callable=upload_excel_to_db,
+    dag=dag,
+    execution_timeout=timedelta(minutes=5)
+)
+
+cleanup_json_task = PythonOperator(
+    task_id='cleanup_newsstand_json',
+    python_callable=cleanup_newsstand_json_files,
+    dag=dag,
+)
+
 check_task = PythonOperator(
     task_id='check_result',
     python_callable=check_and_notify,
@@ -314,7 +407,7 @@ check_task = PythonOperator(
 )
 
 # Task 의존성 설정
-crawler_task >> prepro_and_create_excel_task >> check_task
+crawler_task >> prepro_and_create_excel_task >> upload_excel_task >> cleanup_json_task >> check_task
 
 # DAG 문서화
 dag.doc_md = """
@@ -345,5 +438,6 @@ dag.doc_md = """
 ## Task 순서
 1. `run_crawler`: 뉴스 크롤링 및 AI 요약 생성
 2. `prepro_and_create_excel`: JSON 데이터를 Excel로 변환
-3. `check_result`: 전체 결과 확인 및 로깅
+3. `upload_excel`: Excel 파일을 데이터베이스에 업로드
+4. `check_result`: 전체 결과 확인 및 로깅
 """

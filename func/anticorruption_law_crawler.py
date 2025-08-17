@@ -3,11 +3,9 @@
 
 import json
 import time
-import requests
 from datetime import datetime
 from bs4 import BeautifulSoup
 import os
-import sys
 import tempfile
 import uuid
 import random
@@ -86,7 +84,6 @@ def setup_chrome_driver_ubuntu():
         print(f"🔧 디버깅 포트: {debug_port}")
         
         # Chrome 드라이버 초기화 - 명시적 ChromeDriver 경로 사용
-        driver = None
         try:
             # ChromeDriver 경로 설정 (Docker 우선, 로컬 대안)
             chromedriver_paths = [
@@ -368,9 +365,6 @@ def crawl_anticorruption_law_with_retry(max_attempts=5):
         '오류_메시지': "예상치 못한 오류"
     }
 
-def crawl_anticorruption_law():
-    """청탁금지법 크롤링 함수 (하위 호환성 유지)"""
-    return crawl_anticorruption_law_with_retry(max_attempts=5)
 
 def save_to_json(data, filename=None):
     """JSON 파일로 저장"""

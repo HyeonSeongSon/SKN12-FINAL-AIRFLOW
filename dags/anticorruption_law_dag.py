@@ -66,8 +66,100 @@ def run_anticorruption_crawler():
         logging.error(f"청탁금지법 크롤링 중 오류: {str(e)}")
         raise
 
+def check_for_changes():
+    """법률 정보 변경사항 확인"""
+    try:
+        # func 디렉토리 경로 설정
+        func_dir = os.path.join(os.path.dirname(current_dir), 'func')
+        sys.path.append(func_dir)
+        
+        # anticorruption_law_logic 모듈 임포트
+        from anticorruption_law_logic import check_law_info_changes
+        
+        logging.info("법률 정보 변경사항 확인 시작")
+        
+        # 변경사항 확인
+        has_changes = check_law_info_changes()
+        
+        logging.info(f"변경사항 확인 결과: {'변경 있음' if has_changes else '변경 없음'}")
+        
+        return has_changes
+        
+    except Exception as e:
+        logging.error(f"변경사항 확인 중 오류: {str(e)}")
+        raise
+
+def delete_old_files_conditional(**context):
+    """변경사항이 있을 때만 오래된 파일 삭제"""
+    try:
+        # 이전 태스크 결과 확인
+        has_changes = context['task_instance'].xcom_pull(task_ids='check_changes')
+        
+        if has_changes:
+            logging.info("변경사항이 있어 오래된 파일을 삭제합니다.")
+            
+            # func 디렉토리 경로 설정
+            func_dir = os.path.join(os.path.dirname(current_dir), 'func')
+            sys.path.append(func_dir)
+            
+            from anticorruption_law_logic import delete_old_files
+            
+            # 오래된 파일 삭제
+            result = delete_old_files()
+            
+            logging.info(f"파일 삭제 결과: {result['message']}")
+            
+            return True  # Excel 생성을 위해 True 반환
+        else:
+            logging.info("변경사항이 없어 파일 삭제를 건너뜁니다.")
+            return False  # Excel 생성 건너뛰기
+            
+    except Exception as e:
+        logging.error(f"파일 삭제 중 오류: {str(e)}")
+        raise
+
+def create_excel_file(**context):
+    """Excel 파일 생성"""
+    try:
+        # 이전 태스크 결과 확인
+        should_create_excel = context['task_instance'].xcom_pull(task_ids='delete_old_files')
+        
+        if should_create_excel:
+            logging.info("Excel 파일 생성을 시작합니다.")
+            
+            # func 디렉토리 경로 설정
+            func_dir = os.path.join(os.path.dirname(current_dir), 'func')
+            preprocessing_path = os.path.join(func_dir, 'anticorruption_law_preprocessing.py')
+            
+            # Python 스크립트 실행
+            result = subprocess.run(
+                ['python3', preprocessing_path],
+                cwd=func_dir,
+                capture_output=True,
+                text=True,
+                timeout=300  # 5분 타임아웃
+            )
+            
+            if result.returncode == 0:
+                logging.info(f"Excel 파일 생성 성공:\n{result.stdout}")
+            else:
+                logging.error(f"Excel 파일 생성 실패:\n{result.stderr}")
+                raise Exception(f"Excel 파일 생성 실패: {result.stderr}")
+            
+            return "Excel 파일 생성 완료"
+        else:
+            logging.info("변경사항이 없어 Excel 파일 생성을 건너뜁니다.")
+            return "Excel 파일 생성 건너뜀"
+            
+    except subprocess.TimeoutExpired:
+        logging.error("Excel 파일 생성 타임아웃 (5분)")
+        raise Exception("Excel 파일 생성 타임아웃")
+    except Exception as e:
+        logging.error(f"Excel 파일 생성 중 오류: {str(e)}")
+        raise
+
 def process_law_files():
-    """법률 파일 처리 (변경사항 확인 및 파일 정리)"""
+    """법률 파일 처리 (변경사항 확인 및 파일 정리) - 기존 호환성 유지"""
     try:
         # func 디렉토리 경로 설정
         func_dir = os.path.join(os.path.dirname(current_dir), 'func')
@@ -116,12 +208,33 @@ crawl_task = PythonOperator(
     dag=dag
 )
 
-# 태스크 2: 법률 파일 처리
+# 태스크 2: 변경사항 확인
+check_changes_task = PythonOperator(
+    task_id='check_changes',
+    python_callable=check_for_changes,
+    dag=dag
+)
+
+# 태스크 3: 조건부 파일 삭제
+delete_files_task = PythonOperator(
+    task_id='delete_old_files',
+    python_callable=delete_old_files_conditional,
+    dag=dag
+)
+
+# 태스크 4: 조건부 Excel 파일 생성
+excel_task = PythonOperator(
+    task_id='create_excel',
+    python_callable=create_excel_file,
+    dag=dag
+)
+
+# 태스크 5: 기존 법률 파일 처리 (호환성 유지)
 process_task = PythonOperator(
     task_id='process_law_files',
     python_callable=process_law_files,
     dag=dag
 )
 
-# 태스크 의존성 설정: 크롤링 → 파일 처리
-crawl_task >> process_task
+# 태스크 의존성 설정
+crawl_task >> check_changes_task >> delete_files_task >> excel_task >> process_task

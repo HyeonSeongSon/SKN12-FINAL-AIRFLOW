@@ -51,10 +51,32 @@ def run_hira_test_crawler():
 import sys
 import os
 sys.path.append('/opt/airflow/func')
-from hira_crawler import test_crawling
+
+try:
+    from hira_crawler import test_crawling
+    print("✅ hira_crawler 모듈 import 성공")
+except ImportError as e:
+    print(f"❌ hira_crawler 모듈 import 실패: {e}")
+    # 대안으로 test_crawling_with_retry 함수 시도
+    try:
+        from hira_crawler import test_crawling_with_retry
+        print("✅ test_crawling_with_retry 함수 import 성공")
+        def test_crawling():
+            return test_crawling_with_retry()
+    except ImportError as e2:
+        print(f"❌ test_crawling_with_retry 함수도 import 실패: {e2}")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    test_crawling()
+    print("🏥 HIRA 테스트 크롤링 시작...")
+    try:
+        result = test_crawling()
+        print("✅ HIRA 테스트 크롤링 완료")
+        if result:
+            print(f"결과: {result}")
+    except Exception as e:
+        print(f"❌ HIRA 테스트 크롤링 중 오류: {e}")
+        sys.exit(1)
 '''
         
         # 임시 스크립트 파일 생성
@@ -129,14 +151,14 @@ if __name__ == "__main__":
             import glob
             # 크롤러가 실제로 저장하는 경로와 일치시킴
             result_dir = '/home/son/SKN12-FINAL-AIRFLOW/crawler_result'
-            test_files = glob.glob(os.path.join(result_dir, 'hira_data_test_range.json'))
+            test_files = glob.glob(os.path.join(result_dir, 'hira_data_test_range.xlsx'))
             if test_files:
                 latest_file = test_files[0]
                 logging.info(f"생성된 테스트 파일: {latest_file}")
                 return {'status': 'success', 'file': latest_file, 'output': full_output}
             else:
-                logging.warning("테스트 JSON 파일이 생성되지 않았습니다.")
-                return {'status': 'warning', 'message': '테스트 JSON 파일 없음', 'output': full_output}
+                logging.warning("테스트 Excel 파일이 생성되지 않았습니다.")
+                return {'status': 'warning', 'message': '테스트 Excel 파일 없음', 'output': full_output}
         else:
             logging.error(f"❌ HIRA 테스트 크롤링 실패 (exit code: {return_code})")
             if full_error:

@@ -320,6 +320,67 @@ def add_delay_between_crawlers():
         logging.error(f"❌ 대기 중 오류: {str(e)}")
         return {'status': 'error', 'message': str(e)}
 
+def create_medical_excel_report(**context):
+    """의료뉴스 JSON 데이터를 Excel로 변환"""
+    try:
+        # 이전 태스크 결과 가져오기
+        recent_result = context['task_instance'].xcom_pull(task_ids='crawl_recent_news')
+        trending_result = context['task_instance'].xcom_pull(task_ids='crawl_trending_news')
+        
+        # 최소 하나의 크롤링이 성공했는지 확인
+        success_count = 0
+        if recent_result and recent_result.get('status') == 'success':
+            success_count += 1
+        if trending_result and trending_result.get('status') == 'success':
+            success_count += 1
+            
+        if success_count > 0:
+            logging.info(f"📊 Excel 파일 생성 시작 (성공한 크롤링: {success_count}/2개)")
+            
+            # medical_news_preprocessing.py 임포트
+            import sys
+            if os.getenv('AIRFLOW__CORE__EXECUTOR'):  # Docker 환경
+                func_dir = '/opt/airflow/func'
+            else:  # 로컬 환경
+                func_dir = os.path.join(os.path.dirname(current_dir), 'func')
+            
+            if func_dir not in sys.path:
+                sys.path.append(func_dir)
+            
+            # 모듈 임포트 및 실행
+            try:
+                import medical_news_preprocessing
+                
+                # 모듈 리로드 (최신 코드 반영)
+                import importlib
+                importlib.reload(medical_news_preprocessing)
+                
+                # Excel 파일 생성 함수 실행
+                result_df = medical_news_preprocessing.preprocess_medical_news()
+                
+                if result_df is not None and len(result_df) > 0:
+                    logging.info(f"✅ Excel 파일 생성 완료: {len(result_df)}개 고유 기사 처리")
+                    return {'status': 'success', 'processed_count': len(result_df)}
+                else:
+                    logging.warning("⚠️ Excel 파일 생성됨, 하지만 고유한 새 데이터가 없음")
+                    return {'status': 'warning', 'message': '새로운 고유 데이터 없음'}
+                    
+            except ImportError as e:
+                logging.error(f"❌ 모듈 임포트 실패: {e}")
+                return {'status': 'error', 'message': f'모듈 임포트 실패: {e}'}
+            except Exception as e:
+                logging.error(f"❌ Excel 파일 생성 실패: {e}")
+                return {'status': 'error', 'message': f'Excel 생성 실패: {e}'}
+                
+        else:
+            logging.warning("⚠️ 모든 크롤링이 실패하여 Excel 생성을 건너뜁니다.")
+            return {'status': 'skipped', 'message': '크롤링 실패로 건너뜀'}
+            
+    except Exception as e:
+        logging.error(f"❌ Excel 생성 태스크 실행 중 오류: {e}")
+        return {'status': 'error', 'message': str(e)}
+
+
 def aggregate_results(**context):
     """크롤링 결과 집계"""
     try:
@@ -328,6 +389,7 @@ def aggregate_results(**context):
         # XCom에서 결과 가져오기
         recent_result = context['task_instance'].xcom_pull(task_ids='crawl_recent_news')
         trending_result = context['task_instance'].xcom_pull(task_ids='crawl_trending_news')
+        excel_result = context['task_instance'].xcom_pull(task_ids='create_medical_excel')
         
         total_files = 0
         recent_file = None
@@ -347,7 +409,12 @@ def aggregate_results(**context):
         else:
             logging.warning(f"📈 트렌딩 뉴스 크롤링 실패: {trending_result}")
         
+        # Excel 생성 결과
+        excel_status = excel_result.get('status', 'unknown') if excel_result else 'unknown'
+        excel_count = excel_result.get('processed_count', 0) if excel_result else 0
+        
         logging.info(f"🎯 성공한 크롤링: {total_files}/2개")
+        logging.info(f"📊 Excel 생성: {excel_status} ({excel_count}개 고유 기사 처리)")
         logging.info(f"📊 실행 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
         if total_files > 0:
@@ -359,6 +426,8 @@ def aggregate_results(**context):
             'total_successful': total_files,
             'recent_news_file': recent_file,
             'trending_news_file': trending_file,
+            'excel_status': excel_status,
+            'excel_count': excel_count,
             'timestamp': datetime.now().isoformat(),
             'status': 'completed' if total_files > 0 else 'failed'
         }
@@ -401,6 +470,14 @@ crawl_trending_news = PythonOperator(
     execution_timeout=timedelta(minutes=30)
 )
 
+# Excel 파일 생성
+create_excel_task = PythonOperator(
+    task_id='create_medical_excel',
+    python_callable=create_medical_excel_report,
+    dag=dag,
+    execution_timeout=timedelta(minutes=10)
+)
+
 # 결과 집계
 aggregate_task = PythonOperator(
     task_id='aggregate_results',
@@ -417,8 +494,8 @@ cleanup_end = PythonOperator(
     execution_timeout=timedelta(minutes=5)
 )
 
-# Task 의존성 설정 - 순차적 실행 (크롤러 간 대기 추가)
-cleanup_start >> crawl_recent_news >> delay_task >> crawl_trending_news >> aggregate_task >> cleanup_end
+# Task 의존성 설정 - 순차적 실행 (Excel 생성 추가)
+cleanup_start >> crawl_recent_news >> delay_task >> crawl_trending_news >> create_excel_task >> aggregate_task >> cleanup_end
 
 # DAG 문서화
 dag.doc_md = """
@@ -436,17 +513,29 @@ dag.doc_md = """
 1. **최근 뉴스 수집**: 오늘/어제 뉴스 크롤링 (날짜 기반 필터링)
 2. **트렌딩 뉴스 수집**: 당일 트렌딩 뉴스 크롤링 (최근 뉴스 완료 후 실행)
 3. **AI 요약**: OpenAI GPT-4o를 사용한 뉴스 요약 생성
-4. **결과 저장**: JSON 형태로 파일 저장
-5. **실시간 로깅**: 크롤링 진행상황을 실시간으로 Airflow 로그에 출력
-6. **순차 실행**: 리소스 경합을 방지하기 위해 크롤러들을 순차적으로 실행
+4. **Excel 변환**: JSON 데이터를 Excel로 변환하며 중복 제거 및 고유 기사만 추출
+5. **결과 저장**: JSON 및 Excel 형태로 파일 저장
+6. **실시간 로깅**: 크롤링 진행상황을 실시간으로 Airflow 로그에 출력
+7. **순차 실행**: 리소스 경합을 방지하기 위해 크롤러들을 순차적으로 실행
 
 ## 환경 설정
 - `OPENAI_API_KEY`: OpenAI API 키 (필수)
 - Chrome/ChromeDriver 설치 필요
+- `openpyxl` 패키지 필요 (Excel 생성용)
 
 ## 산출물
 - `medical_recent_news_YYYYMMDD_HHMMSS.json`: 최근 뉴스 크롤링 결과
 - `medical_top_trending_news_YYYYMMDD_HHMMSS.json`: 트렌딩 뉴스 크롤링 결과
+- `medical_news_unique_YYYYMMDD_HHMMSS.xlsx`: 고유한 새 기사만 포함한 Excel 파일
+
+## Task 순서
+1. `cleanup_chrome_start`: Chrome 프로세스 정리
+2. `crawl_recent_news`: 최근 뉴스 크롤링
+3. `delay_between_crawlers`: 크롤러 간 대기 (30초)
+4. `crawl_trending_news`: 트렌딩 뉴스 크롤링
+5. `create_medical_excel`: Excel 파일 생성 (중복 제거)
+6. `aggregate_results`: 전체 결과 집계
+7. `cleanup_chrome_end`: Chrome 프로세스 정리
 
 ## 실시간 로깅
 각 크롤러의 진행상황을 실시간으로 확인할 수 있습니다:

@@ -7,12 +7,14 @@
 
 import json
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import tempfile
 import uuid
 import random
 import subprocess
+import re
+from dateutil import parser
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -232,6 +234,204 @@ def collect_news_urls(driver):
     print(f"🎯 총 {len(news_urls)}개의 뉴스 URL 수집 완료")
     return news_urls
 
+def extract_article_date_yakup(driver, soup=None):
+    """약업닷컴 기사에서 업로드 날짜 추출 (직접 XPath 사용)"""
+    try:
+        # 사용자가 제공한 정확한 XPath 사용
+        date_xpath = "//*[@id='main_con']/div[1]/div/div[1]/div[1]/div[2]/div[2]"
+        
+        try:
+            date_element = WebDriverWait(driver, 3).until(
+                EC.presence_of_element_located((By.XPATH, date_xpath))
+            )
+            date_text = date_element.text.strip()
+            
+            if date_text:
+                print(f"    🔍 업로드 날짜 발견: {date_text}")
+                return parse_and_format_date_yakup(date_text)
+            else:
+                print("    ⚠️ 날짜 요소는 있지만 텍스트가 없음")
+                
+        except TimeoutException:
+            print(f"    ⚠️ 지정된 XPath에서 날짜 요소를 찾을 수 없음: {date_xpath}")
+        except Exception as e:
+            print(f"    ❌ 날짜 요소 접근 오류: {e}")
+        
+        # 백업: 다른 가능한 위치들 빠르게 확인
+        backup_selectors = [
+            "//*[@id='main_con']/div[1]/div/div[1]/div[2]/div[1]/span",
+            "//*[@id='main_con']/div[1]/div/div[1]/div[2]/div[1]",
+            "//*[@id='main_con']/div[1]/div/div[1]/div[2]/span"
+        ]
+        
+        for selector in backup_selectors:
+            try:
+                elem = driver.find_element(By.XPATH, selector)
+                text = elem.text.strip()
+                if text and (re.search(r'\d{4}', text) or '시간 전' in text or '분 전' in text):
+                    print(f"    🔍 백업으로 날짜 발견: {selector} -> {text}")
+                    return parse_and_format_date_yakup(text)
+            except:
+                continue
+        
+        print("    ⚠️ 모든 시도에서 날짜를 찾을 수 없음")
+        return None
+        
+    except Exception as e:
+        print(f"    ❌ 날짜 추출 오류: {e}")
+        return None
+
+def parse_and_format_date_yakup(date_text):
+    """다양한 날짜 형식을 파싱하여 YYYY.MM.DD hh:mm 형태로 변환"""
+    try:
+        current_time = datetime.now()
+        
+        print(f"    🔍 날짜 파싱 시도: '{date_text}'")
+        
+        # "입력"과 "수정" 날짜가 함께 있는 경우 처리
+        if '입력' in date_text:
+            # "입력 2025-08-12 09:34 수정 2025.08.12 09:34" 에서 입력 날짜만 추출
+            input_match = re.search(r'입력[^\d]*(\d{4}[-.\s]\d{1,2}[-.\s]\d{1,2}[^\d]*\d{1,2}:\d{2})', date_text)
+            if input_match:
+                input_date = input_match.group(1).strip()
+                print(f"    ✅ 입력 날짜 추출: '{input_date}'")
+                # 하이픈을 점으로 변환하고 공백 제거
+                input_date = re.sub(r'[-\s]', '.', input_date)
+                input_date = re.sub(r'\.+', '.', input_date)  # 연속된 점 제거
+                # 재귀 호출 방지를 위해 직접 처리
+                try:
+                    dt = parser.parse(input_date, fuzzy=True)
+                    return dt.strftime("%Y.%m.%d %H:%M")
+                except:
+                    # 수동 파싱
+                    parts = input_date.split()
+                    if len(parts) >= 2:
+                        date_part = parts[0].replace('.', '-')
+                        time_part = parts[1]
+                        try:
+                            dt = datetime.strptime(f"{date_part} {time_part}", "%Y-%m-%d %H:%M")
+                            return dt.strftime("%Y.%m.%d %H:%M")
+                        except:
+                            pass
+                    return current_time.strftime("%Y.%m.%d %H:%M")
+            
+            # 시간이 없는 경우: "입력 2025-08-12"
+            input_match_no_time = re.search(r'입력[^\d]*(\d{4}[-.\s]\d{1,2}[-.\s]\d{1,2})', date_text)
+            if input_match_no_time:
+                input_date = input_match_no_time.group(1).strip() + " 00:00"
+                print(f"    ✅ 입력 날짜 추출 (시간 없음): '{input_date}'")
+                input_date = re.sub(r'[-\s]', '.', input_date)
+                # 재귀 호출 방지를 위해 직접 처리
+                try:
+                    dt = parser.parse(input_date, fuzzy=True)
+                    return dt.strftime("%Y.%m.%d %H:%M")
+                except:
+                    return current_time.strftime("%Y.%m.%d %H:%M")
+        
+        # "작성"이 있는 경우 처리 (SBS와 유사한 패턴)
+        elif '작성' in date_text:
+            created_match = re.search(r'작성[^\d]*(\d{4}[-.\s]\d{1,2}[-.\s]\d{1,2}[^\d]*\d{1,2}:\d{2})', date_text)
+            if created_match:
+                created_date = created_match.group(1).strip()
+                print(f"    ✅ 작성 날짜 추출: '{created_date}'")
+                created_date = re.sub(r'[-\s]', '.', created_date)
+                created_date = re.sub(r'\.+', '.', created_date)
+                # 재귀 호출 방지를 위해 직접 처리
+                try:
+                    dt = parser.parse(created_date, fuzzy=True)
+                    return dt.strftime("%Y.%m.%d %H:%M")
+                except:
+                    return current_time.strftime("%Y.%m.%d %H:%M")
+        
+        # 상대적 시간 표현 처리
+        elif '시간 전' in date_text:
+            hours_ago = int(re.search(r'(\d+)시간', date_text).group(1))
+            target_time = current_time - timedelta(hours=hours_ago)
+            return target_time.strftime("%Y.%m.%d %H:%M")
+        
+        elif '분 전' in date_text:
+            minutes_ago = int(re.search(r'(\d+)분', date_text).group(1))
+            target_time = current_time - timedelta(minutes=minutes_ago)
+            return target_time.strftime("%Y.%m.%d %H:%M")
+        
+        elif '일 전' in date_text:
+            days_ago = int(re.search(r'(\d+)일', date_text).group(1))
+            target_time = current_time - timedelta(days=days_ago)
+            return target_time.strftime("%Y.%m.%d %H:%M")
+        
+        # 약업닷컴 특수 형식: "2024. 1. 15. 14:30"
+        elif re.match(r'\d{4}\. \d{1,2}\. \d{1,2}\. \d{1,2}:\d{2}', date_text):
+            # "2024. 1. 15. 14:30" -> "2024.01.15 14:30"
+            parts = date_text.split('. ')
+            if len(parts) >= 4:
+                year = parts[0]
+                month = parts[1].zfill(2)
+                day = parts[2].zfill(2)
+                time_part = parts[3] if ':' in parts[3] else "00:00"
+                return f"{year}.{month}.{day} {time_part}"
+        
+        # 한국어 날짜 형식 처리
+        elif '년' in date_text and '월' in date_text and '일' in date_text:
+            date_match = re.search(r'(\d{4})년 (\d{1,2})월 (\d{1,2})일\s*(\d{1,2}):(\d{2})', date_text)
+            if date_match:
+                year, month, day, hour, minute = date_match.groups()
+                return f"{year}.{month.zfill(2)}.{day.zfill(2)} {hour.zfill(2)}:{minute}"
+        
+        # 하이픈 형식 날짜 처리: "2025-08-12 09:34" 등
+        elif re.search(r'\d{4}-\d{1,2}-\d{1,2}', date_text):
+            try:
+                # 시간이 있는 경우: "2025-08-12 09:34"
+                datetime_match = re.search(r'(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})', date_text)
+                if datetime_match:
+                    year, month, day, hour, minute = datetime_match.groups()
+                    result = f"{year}.{month.zfill(2)}.{day.zfill(2)} {hour.zfill(2)}:{minute}"
+                    print(f"    ✅ 하이픈 형식 날짜 파싱: '{result}'")
+                    return result
+                
+                # 날짜만 있는 경우: "2025-08-12"
+                date_match = re.search(r'(\d{4})-(\d{1,2})-(\d{1,2})', date_text)
+                if date_match:
+                    year, month, day = date_match.groups()
+                    result = f"{year}.{month.zfill(2)}.{day.zfill(2)} 00:00"
+                    print(f"    ✅ 하이픈 형식 날짜 파싱 (시간 없음): '{result}'")
+                    return result
+                    
+            except Exception as e:
+                print(f"    ❌ 하이픈 형식 파싱 오류: {e}")
+        
+        # 일반적인 날짜 형식들 시도
+        date_formats = [
+            '%Y-%m-%d %H:%M:%S',
+            '%Y-%m-%d %H:%M',
+            '%Y.%m.%d %H:%M',
+            '%Y/%m/%d %H:%M',
+            '%Y-%m-%d',
+            '%Y.%m.%d',
+            '%Y/%m/%d'
+        ]
+        
+        for fmt in date_formats:
+            try:
+                dt = datetime.strptime(date_text.strip(), fmt)
+                return dt.strftime("%Y.%m.%d %H:%M")
+            except ValueError:
+                continue
+        
+        # dateutil.parser 사용 (마지막 시도)
+        try:
+            dt = parser.parse(date_text, fuzzy=True)
+            return dt.strftime("%Y.%m.%d %H:%M")
+        except:
+            pass
+        
+        # 파싱 실패 시 현재 시간 반환
+        print(f"    ⚠️ 날짜 파싱 실패, 현재 시간 사용: '{date_text}'")
+        return current_time.strftime("%Y.%m.%d %H:%M")
+        
+    except Exception as e:
+        print(f"    ❌ 날짜 파싱 오류: {e}")
+        return datetime.now().strftime("%Y.%m.%d %H:%M")
+
 def crawl_news_detail(driver, news_url, rank):
     """개별 뉴스 상세 정보 크롤링"""
     print(f"📰 [{rank}] 뉴스 상세 정보 크롤링 중...")
@@ -249,8 +449,20 @@ def crawl_news_detail(driver, news_url, rank):
             'summary': '',
             'url': news_url,
             'date': datetime.now().strftime('%Y%m%d'),
-            'source': 'yakup.com'
+            'pub_time': None,  # 업로드 날짜/시간
+            'source': 'yakup.com',
+            'type': 'medical news'
         }
+        
+        # 업로드 날짜 추출
+        print("   📅 업로드 날짜 추출 중...")
+        pub_time = extract_article_date_yakup(driver)
+        if pub_time:
+            news_info['pub_time'] = pub_time
+            print(f"   ✅ 업로드 날짜: {pub_time}")
+        else:
+            news_info['pub_time'] = datetime.now().strftime("%Y.%m.%d %H:%M")
+            print("   ⚠️ 날짜 추출 실패, 현재 시간 사용")
         
         # 제목 추출 (//*[@id="main_con"]/div[1]/div/div[1]/div[1])
         try:
@@ -334,12 +546,59 @@ def summarize_with_openai(title, content):
         print(f"    ❌ OpenAI 요약 오류: {e}")
         return None
 
-def add_summaries(news_list):
-    """뉴스 목록에 AI 요약 추가"""
+def should_filter_by_time_yakup():
+    """현재 시간에 따른 뉴스 필터링 여부 결정"""
+    current_hour = datetime.now().hour
+    
+    if current_hour >= 13:
+        print(f"⏰ 현재 시각: {current_hour}시 - 09시 이후 뉴스만 크롤링합니다.")
+        return True
+    else:
+        print(f"⏰ 현재 시각: {current_hour}시 - 모든 뉴스를 크롤링합니다.")
+        return False
+
+def is_news_time_valid_yakup(news_pub_time, filter_enabled):
+    """뉴스 발행 시간이 필터링 조건에 맞는지 확인"""
+    if not filter_enabled or not news_pub_time:
+        return True
+    
+    try:
+        # YYYY.MM.DD hh:mm 형식 파싱
+        news_datetime = datetime.strptime(news_pub_time, "%Y.%m.%d %H:%M")
+        today = datetime.now().date()
+        
+        # 오늘 날짜인 경우만 시간 필터 적용
+        if news_datetime.date() == today:
+            if news_datetime.hour >= 9:
+                print(f"    ✅ 시간 필터 통과: {news_pub_time} (09시 이후)")
+                return True
+            else:
+                print(f"    ❌ 시간 필터 제외: {news_pub_time} (09시 이전)")
+                return False
+        else:
+            # 오늘이 아닌 날짜는 모두 포함
+            print(f"    ✅ 날짜 필터 통과: {news_pub_time} (오늘이 아닌 날짜)")
+            return True
+            
+    except Exception as e:
+        print(f"    ⚠️ 날짜 파싱 오류, 뉴스 포함: {news_pub_time} - {e}")
+        return True
+
+def add_summaries(news_list, filter_enabled=False):
+    """뉴스 목록에 AI 요약 추가 (시간 필터링 포함)"""
     print(f"\n🤖 AI 요약 생성 중... ({len(news_list)}개)")
+    
+    processed_news = []
+    filtered_count = 0
     
     for i, news in enumerate(news_list, 1):
         print(f"\n[{i}/{len(news_list)}] {news['title'][:50]}...")
+        
+        # 시간 필터링 검사
+        if not is_news_time_valid_yakup(news.get('pub_time'), filter_enabled):
+            filtered_count += 1
+            print(f"    🚫 시간 조건으로 인해 제외됨")
+            continue
         
         if news['content'] and "추출 실패" not in news['content']:
             print("    🤖 AI 요약 생성 중...")
@@ -355,11 +614,17 @@ def add_summaries(news_list):
             news['summary'] = "본문 내용 부족"
             print("    ❌ 본문 내용이 부족하여 요약 불가")
         
+        processed_news.append(news)
+        
         # API 요청 간격 조정
         if i < len(news_list):
             time.sleep(2)
     
-    return news_list
+    if filtered_count > 0:
+        print(f"\n🕘 시간 필터로 제외된 뉴스: {filtered_count}개")
+        print(f"✅ 최종 처리된 뉴스: {len(processed_news)}개")
+    
+    return processed_news
 
 def crawl_yakup_news(target_date=None):
     """약업닷컴 의료뉴스 크롤링 메인 함수"""
@@ -511,9 +776,10 @@ def crawl_yakup_news(target_date=None):
         
         print(f"\n🎉 크롤링 완료: {len(news_data)}개 뉴스 수집")
         
-        # 3단계: AI 요약 생성
+        # 3단계: AI 요약 생성 (시간 기반 필터링 적용)
         if news_data:
-            news_data = add_summaries(news_data)
+            time_filter_enabled = should_filter_by_time_yakup()
+            news_data = add_summaries(news_data, filter_enabled=time_filter_enabled)
         
         return {
             'target_date': target_date,
@@ -672,13 +938,10 @@ def main_with_retry(target_date=None, max_retries=3):
         else:
             print("💥 크롤링 최종 실패!")
 
-def main(target_date=None):
-    """메인 실행 함수 (하위 호환성 유지)"""
-    main_with_retry(target_date, max_retries=3)
 
 if __name__ == "__main__":
     # 오늘 날짜로 크롤링
     target_date = datetime.now().strftime('%Y%m%d')
     print(f"🎯 설정된 날짜: {target_date}")
     
-    main(target_date)
+    main_with_retry(target_date, max_retries=3)

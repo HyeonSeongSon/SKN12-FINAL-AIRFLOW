@@ -19,15 +19,14 @@ import openai
 import re
 import time
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
+from dateutil import parser
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.chrome.service import Service
 
 # 전역 설정: 데이터 수집 완료 후 로그 최소화
 QUIET_MODE = True  # True면 로그 최소화
@@ -104,29 +103,11 @@ def setup_chrome_driver_ubuntu():
         log_message(f"🔧 임시 세션 디렉토리: {temp_dir}")
         log_message(f"🔧 디버깅 포트: {debug_port}")
         
-        # Chrome 드라이버 초기화 - 명시적 ChromeDriver 경로 사용
+        # Chrome 드라이버 초기화 - Docker 환경에서는 시스템 ChromeDriver 사용
         driver = None
         try:
-            # ChromeDriver 경로 설정 (Docker 우선, 로컬 대안)
-            chromedriver_paths = [
-                '/usr/local/bin/chromedriver',  # Docker 환경
-                '/home/son/chromedriver'        # 로컬 환경
-            ]
-            
-            service = None
-            for path in chromedriver_paths:
-                if os.path.exists(path):
-                    service = Service(path)
-                    log_message(f"🔧 ChromeDriver 경로 발견: {path}")
-                    break
-            
-            if service:
-                driver = webdriver.Chrome(service=service, options=chrome_options)
-                log_message(f"✅ Chrome 드라이버 생성 성공 (명시적 경로)")
-            else:
-                # fallback to system path
-                driver = webdriver.Chrome(options=chrome_options)
-                log_message("✅ Chrome 드라이버 생성 성공 (시스템 경로)")
+            driver = webdriver.Chrome(options=chrome_options)
+            log_message("✅ Chrome 드라이버 생성 성공")
             
         except Exception as e:
             log_message(f"❌ Chrome 드라이버 생성 실패: {e}")
@@ -337,14 +318,15 @@ def extract_news_from_iframe(driver, press_name):
                         if any(news['title'] == title for news in headlines):
                             continue
                         
-                        # 뉴스 데이터 생성
+                        # 뉴스 데이터 생성 (날짜는 나중에 개별 기사에서 추출)
                         news_data = {
                             'rank': len(headlines) + 1,
                             'title': title,
                             'url': url,
                             'press': press_name,
-                            'pub_time': datetime.now().strftime("%Y-%m-%d %H:%M"),
-                            'source': f'iframe_{press_name.lower()}_selector_{selector_index + 1}'
+                            'pub_time': None,  # 개별 기사 페이지에서 추출할 예정
+                            'source': f'iframe_{press_name.lower()}_selector_{selector_index + 1}',
+                            'type': 'common news'
                         }
                         
                         headlines.append(news_data)
@@ -574,8 +556,371 @@ def crawl_newsstand_with_iframe(driver):
         log_message(f"❌ 뉴스스탠드 크롤링 오류: {e}", force=True)
         return []
 
+def extract_article_date_with_sbs_mbc(soup, url):
+    """뉴스 기사에서 업로드 날짜 추출 (SBS/MBC 전용 로직 포함)"""
+    try:
+        # MBC 뉴스인지 확인
+        if 'mbc.co.kr' in url:
+            log_message("    🎯 MBC 뉴스 감지 - MBC 전용 날짜 추출 시작")
+            
+            # MBC 전용 XPath 선택자들 (CSS 선택자로 변환)
+            mbc_date_selectors = [
+                # 새로운 MBC 전용 XPath들
+                '#content div section:nth-child(1) article div:nth-child(1) div:nth-child(3) div:nth-child(1)',
+                '#content > div > section:nth-child(1) > article > div:nth-child(1) > div:nth-child(3) > div:nth-child(1)',
+                '#wrap #container #content div section:nth-child(1) article div:nth-child(1) div:nth-child(3) div:nth-child(1)',
+                # 추가 MBC 선택자
+                '.article_date',
+                '.date_area', 
+                '.news_date',
+                '.write-date',
+                '.article-info .date',
+                '.publish-date'
+            ]
+            
+            for selector in mbc_date_selectors:
+                try:
+                    elem = soup.select_one(selector)
+                    if elem:
+                        text = elem.get_text(strip=True)
+                        log_message(f"    🔍 MBC 날짜 요소 발견 ({selector}): '{text}'")
+                        
+                        # "입력"과 "수정" 둘 다 있는 경우 "입력" 날짜만 추출
+                        if '입력' in text:
+                            # 여러 줄에 걸쳐 있을 수 있는 텍스트 정리
+                            clean_text = re.sub(r'\s+', ' ', text.strip())
+                            log_message(f"    🔍 MBC 정리된 텍스트: '{clean_text}'")
+                            
+                            # "입력 2025-08-13 06:50 | 수정 2025-08-13 07:43" 또는 "입력 2025-08-13 06:50" 형태에서 입력 날짜만 추출
+                            input_match = re.search(r'입력\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2})', clean_text)
+                            if input_match:
+                                date_text = input_match.group(1)
+                                log_message(f"    ✅ MBC 입력 날짜 추출: '{date_text}'")
+                                return parse_and_format_date(date_text)
+                            
+                            # 시간이 없는 경우: "입력 2025-08-13"
+                            input_match_no_time = re.search(r'입력\s+(\d{4}-\d{2}-\d{2})', clean_text)
+                            if input_match_no_time:
+                                date_text = input_match_no_time.group(1) + " 00:00"
+                                log_message(f"    ✅ MBC 입력 날짜 추출 (시간 없음): '{date_text}'")
+                                return parse_and_format_date(date_text)
+                        
+                        # "입력"이 없는 경우 일반적인 날짜 패턴 찾기
+                        if re.search(r'\d{4}', text):
+                            log_message(f"    🔍 MBC 일반 날짜 패턴 시도: '{text}'")
+                            return parse_and_format_date(text)
+                            
+                except Exception as e:
+                    log_message(f"    ❌ MBC 선택자 '{selector}' 오류: {e}")
+                    continue
+            
+            log_message("    ⚠️ MBC 전용 선택자에서 날짜를 찾을 수 없음, 일반 방식으로 시도")
+        
+        # SBS 뉴스인지 확인
+        elif 'sbs.co.kr' in url:
+            log_message("    🎯 SBS 뉴스 감지 - SBS 전용 날짜 추출 시작")
+            
+            # SBS 전용 XPath 선택자들
+            sbs_date_selectors = [
+                # 사용자가 제공한 SBS 전용 XPath (CSS 선택자로 변환)
+                '#container > div:nth-child(1) > div:nth-child(3) > div:nth-child(1) > div > div:nth-child(1) > div:nth-child(2)',
+                '#container > div:nth-child(1) > div:nth-child(3) > div:nth-child(1) > div > div:nth-child(1)',
+                # 추가 SBS 선택자
+                '.article_date',
+                '.date_area',
+                '.news_date',
+                '.write-date',
+                '.article-info .date'
+            ]
+            
+            for selector in sbs_date_selectors:
+                try:
+                    elem = soup.select_one(selector)
+                    if elem:
+                        text = elem.get_text(strip=True)
+                        log_message(f"    🔍 SBS 날짜 요소 발견 ({selector}): '{text}'")
+                        
+                        # "작성"과 "수정" 둘 다 있는 경우 "작성" 날짜만 추출
+                        if '작성' in text:
+                            # "작성 2024.08.12 14:30" 형태에서 날짜만 추출
+                            created_match = re.search(r'작성[^\d]*(\d{4}[.\-/]\d{1,2}[.\-/]\d{1,2}[^\d]*\d{1,2}:\d{2})', text)
+                            if created_match:
+                                date_text = created_match.group(1)
+                                log_message(f"    ✅ SBS 작성 날짜 추출: '{date_text}'")
+                                return parse_and_format_date(date_text)
+                            
+                            # 시간이 없는 경우: "작성 2024.08.12"
+                            created_match_no_time = re.search(r'작성[^\d]*(\d{4}[.\-/]\d{1,2}[.\-/]\d{1,2})', text)
+                            if created_match_no_time:
+                                date_text = created_match_no_time.group(1) + " 00:00"
+                                log_message(f"    ✅ SBS 작성 날짜 추출 (시간 없음): '{date_text}'")
+                                return parse_and_format_date(date_text)
+                        
+                        # "작성"이 없는 경우 일반적인 날짜 패턴 찾기
+                        if re.search(r'\d{4}', text):
+                            log_message(f"    🔍 SBS 일반 날짜 패턴 시도: '{text}'")
+                            return parse_and_format_date(text)
+                            
+                except Exception as e:
+                    log_message(f"    ❌ SBS 선택자 '{selector}' 오류: {e}")
+                    continue
+            
+            log_message("    ⚠️ SBS 전용 선택자에서 날짜를 찾을 수 없음, 일반 방식으로 시도")
+        
+        # 일반적인 날짜 추출 (기존 로직)
+        return extract_article_date(soup)
+        
+    except Exception as e:
+        log_message(f"    ❌ SBS 날짜 추출 오류: {e}")
+        return extract_article_date(soup)
+
+def extract_article_date(soup):
+    """뉴스 기사에서 업로드 날짜 추출 및 YYYY:MM:DD hh:mm 형태로 포맷팅"""
+    try:
+        # 다양한 날짜 선택자 패턴 시도
+        date_selectors = [
+            # 네이버 뉴스
+            'span.t11',
+            'span._ARTICLE_DATE_TIME',
+            'span.article_date',
+            'span.date',
+            'span.txt_date',
+            'div.sponsor span.t11',
+            'div.article_info span.t11',
+            # KBS
+            '.date',
+            '.news-date',
+            'span.datetime',
+            'div.date-area span',
+            '.byline .date',
+            # MBC
+            '.art-time',
+            '.date-info',
+            '.article-date',
+            '.press-date',
+            # SBS 특화 선택자 추가
+            '.date_area',
+            '.article_date',
+            '.news_date',
+            'div.date',
+            '.art_date',
+            '.article-info .date',
+            '.news-info .date',
+            'span.art-date-time',
+            'div.art-date-time',
+            '.publish-info .date',
+            '.info-date',
+            '.write-date',
+            '.news-write-date',
+            # 일반적인 패턴
+            'time',
+            '[datetime]',
+            '.publish-date',
+            '.published',
+            '.timestamp',
+            '.reg-date'
+        ]
+        
+        date_text = None
+        found_selector = None
+        
+        # CSS 선택자로 날짜 찾기
+        for selector in date_selectors:
+            try:
+                elem = soup.select_one(selector)
+                if elem:
+                    # datetime 속성 확인
+                    datetime_attr = elem.get('datetime')
+                    if datetime_attr:
+                        date_text = datetime_attr
+                        found_selector = selector
+                        log_message(f"    🔍 날짜 발견 (datetime 속성): {selector} -> {datetime_attr}")
+                        break
+                    
+                    # 텍스트 내용 확인
+                    text = elem.get_text(strip=True)
+                    if text and (re.search(r'\d{4}', text) or '시간 전' in text or '분 전' in text or '일 전' in text):
+                        date_text = text
+                        found_selector = selector
+                        log_message(f"    🔍 날짜 발견 (텍스트): {selector} -> {text}")
+                        break
+            except Exception as e:
+                continue
+        
+        # 메타 태그에서 날짜 찾기
+        if not date_text:
+            meta_selectors = [
+                'meta[property="article:published_time"]',
+                'meta[name="article:published_time"]',
+                'meta[property="og:article:published_time"]',
+                'meta[name="pubdate"]',
+                'meta[name="date"]',
+                'meta[itemprop="datePublished"]'
+            ]
+            
+            for selector in meta_selectors:
+                try:
+                    meta = soup.select_one(selector)
+                    if meta:
+                        content = meta.get('content')
+                        if content:
+                            date_text = content
+                            break
+                except:
+                    continue
+        
+        if not date_text:
+            # 디버깅: 페이지에서 날짜 관련 요소들 확인
+            log_message("    🔍 날짜 디버깅: 페이지 내 날짜 관련 요소 검색 중...")
+            
+            # 페이지 내 모든 시간 관련 요소 찾기
+            debug_selectors = ['time', '[datetime]', '*[class*="date"]', '*[class*="time"]', '*[id*="date"]', '*[id*="time"]']
+            
+            for debug_sel in debug_selectors:
+                try:
+                    elems = soup.select(debug_sel)
+                    for elem in elems[:3]:  # 처음 3개만
+                        text = elem.get_text(strip=True)
+                        datetime_attr = elem.get('datetime')
+                        class_attr = elem.get('class')
+                        id_attr = elem.get('id')
+                        
+                        if text or datetime_attr:
+                            log_message(f"      - {debug_sel}: text='{text}', datetime='{datetime_attr}', class={class_attr}, id={id_attr}")
+                except:
+                    continue
+            
+            # 마지막 시도: 페이지 전체에서 날짜 패턴 검색
+            text_content = soup.get_text()
+            date_patterns = [
+                r'\d{4}년 \d{1,2}월 \d{1,2}일\s*\d{1,2}시\s*\d{1,2}분',
+                r'\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}',
+                r'\d{4}\.\d{2}\.\d{2}\s+\d{2}:\d{2}',
+                r'\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}',
+                r'\d{1,2}시간\s*전',
+                r'\d{1,2}분\s*전',
+                r'\d{1,2}일\s*전'
+            ]
+            
+            for pattern in date_patterns:
+                match = re.search(pattern, text_content)
+                if match:
+                    date_text = match.group()
+                    log_message(f"    🔍 정규식으로 날짜 발견: {pattern} -> {date_text}")
+                    break
+        
+        if not date_text:
+            log_message("    ⚠️ 날짜를 찾을 수 없음")
+            return None
+        
+        # 날짜 파싱 및 포맷팅
+        log_message(f"    📅 날짜 파싱 시도: '{date_text}' (선택자: {found_selector})")
+        return parse_and_format_date(date_text)
+        
+    except Exception as e:
+        log_message(f"    ❌ 날짜 추출 오류: {e}")
+        return None
+
+def parse_and_format_date(date_text):
+    """다양한 날짜 형식을 파싱하여 YYYY.MM.DD hh:mm 형태로 변환"""
+    try:
+        current_time = datetime.now()
+        
+        # 상대적 시간 표현 처리
+        if '시간 전' in date_text:
+            hours_ago = int(re.search(r'(\d+)시간', date_text).group(1))
+            target_time = current_time - timedelta(hours=hours_ago)
+            return target_time.strftime("%Y.%m.%d %H:%M")
+        
+        elif '분 전' in date_text:
+            minutes_ago = int(re.search(r'(\d+)분', date_text).group(1))
+            target_time = current_time - timedelta(minutes=minutes_ago)
+            return target_time.strftime("%Y.%m.%d %H:%M")
+        
+        elif '일 전' in date_text:
+            days_ago = int(re.search(r'(\d+)일', date_text).group(1))
+            target_time = current_time - timedelta(days=days_ago)
+            return target_time.strftime("%Y.%m.%d %H:%M")
+        
+        # SBS 특수 형식 처리: "2024.8.12 오후 2:30" 또는 "2024.8.12 14:30"
+        elif re.search(r'\d{4}\.\d{1,2}\.\d{1,2}', date_text):
+            try:
+                # 오전/오후 표현이 있는 경우
+                am_pm_match = re.search(r'(\d{4})\.(\d{1,2})\.(\d{1,2})\s*(오전|오후)?\s*(\d{1,2}):(\d{2})', date_text)
+                if am_pm_match:
+                    year, month, day, am_pm, hour, minute = am_pm_match.groups()
+                    hour = int(hour)
+                    
+                    # 오후인 경우 12시간 추가 (12시는 예외)
+                    if am_pm == '오후' and hour != 12:
+                        hour += 12
+                    elif am_pm == '오전' and hour == 12:
+                        hour = 0
+                    
+                    return f"{year}.{month.zfill(2)}.{day.zfill(2)} {hour:02d}:{minute}"
+                
+                # 시간이 없는 경우: "2024.8.12"
+                date_only_match = re.search(r'(\d{4})\.(\d{1,2})\.(\d{1,2})', date_text)
+                if date_only_match:
+                    year, month, day = date_only_match.groups()
+                    return f"{year}.{month.zfill(2)}.{day.zfill(2)} 00:00"
+                    
+            except Exception as e:
+                log_message(f"    ❌ SBS 날짜 파싱 오류: {e}")
+        
+        # 한국어 날짜 형식 처리
+        elif '년' in date_text and '월' in date_text and '일' in date_text:
+            # "2024년 1월 15일 14시 30분" 형태
+            date_match = re.search(r'(\d{4})년 (\d{1,2})월 (\d{1,2})일(?:\s+(\d{1,2})시\s+(\d{1,2})분)?', date_text)
+            if date_match:
+                year, month, day = date_match.group(1), date_match.group(2), date_match.group(3)
+                hour = date_match.group(4) if date_match.group(4) else "00"
+                minute = date_match.group(5) if date_match.group(5) else "00"
+                return f"{year}.{month.zfill(2)}.{day.zfill(2)} {hour.zfill(2)}:{minute.zfill(2)}"
+        
+        # ISO 8601 형식 처리
+        elif 'T' in date_text:
+            try:
+                dt = parser.parse(date_text)
+                return dt.strftime("%Y.%m.%d %H:%M")
+            except:
+                pass
+        
+        # 일반적인 날짜 형식들 시도
+        date_formats = [
+            '%Y-%m-%d %H:%M:%S',
+            '%Y-%m-%d %H:%M',
+            '%Y.%m.%d %H:%M',
+            '%Y/%m/%d %H:%M',
+            '%Y-%m-%d',
+            '%Y.%m.%d',
+            '%Y/%m/%d'
+        ]
+        
+        for fmt in date_formats:
+            try:
+                dt = datetime.strptime(date_text.strip(), fmt)
+                return dt.strftime("%Y.%m.%d %H:%M")
+            except ValueError:
+                continue
+        
+        # dateutil.parser 사용 (마지막 시도)
+        try:
+            dt = parser.parse(date_text, fuzzy=True)
+            return dt.strftime("%Y.%m.%d %H:%M")
+        except:
+            pass
+        
+        # 파싱 실패 시 현재 시간 반환
+        log_message(f"    ⚠️ 날짜 파싱 실패, 현재 시간 사용: '{date_text}'")
+        return current_time.strftime("%Y.%m.%d %H:%M")
+        
+    except Exception as e:
+        log_message(f"    ❌ 날짜 파싱 오류: {e}")
+        return datetime.now().strftime("%Y.%m.%d %H:%M")
+
 def crawl_article_content(url):
-    """뉴스 기사 본문 추출"""
+    """뉴스 기사 본문 및 날짜 추출"""
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -585,6 +930,9 @@ def crawl_article_content(url):
         response.raise_for_status()
         
         soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # 업로드 날짜 추출 (SBS/MBC 전용 로직 포함)
+        article_date = extract_article_date_with_sbs_mbc(soup, url)
         
         # 다양한 본문 선택자 시도
         content_selectors = [
@@ -619,11 +967,17 @@ def crawl_article_content(url):
         article_content = re.sub(r'\s+', ' ', article_content)
         article_content = re.sub(r'\n+', ' ', article_content)
         
-        return article_content.strip() if article_content else None
+        return {
+            'content': article_content.strip() if article_content else None,
+            'pub_date': article_date
+        }
         
     except Exception as e:
-        log_message(f"    ❌ 본문 추출 오류: {e}")
-        return None
+        log_message(f"    ❌ 본문/날짜 추출 오류: {e}")
+        return {
+            'content': None,
+            'pub_date': None
+        }
 
 def summarize_with_llm(content, title, press):
     """OpenAI를 사용하여 기사 요약"""
@@ -657,6 +1011,44 @@ def summarize_with_llm(content, title, press):
     except Exception as e:
         log_message(f"    ❌ LLM 요약 오류: {e}")
         return None
+
+def should_filter_by_time():
+    """현재 시간에 따른 뉴스 필터링 여부 결정"""
+    current_hour = datetime.now().hour
+    
+    if current_hour >= 13:
+        log_message(f"⏰ 현재 시각: {current_hour}시 - 09시 이후 뉴스만 크롤링합니다.", force=True)
+        return True
+    else:
+        log_message(f"⏰ 현재 시각: {current_hour}시 - 모든 뉴스를 크롤링합니다.", force=True)
+        return False
+
+def is_news_time_valid(news_pub_time, filter_enabled):
+    """뉴스 발행 시간이 필터링 조건에 맞는지 확인"""
+    if not filter_enabled or not news_pub_time:
+        return True
+    
+    try:
+        # YYYY.MM.DD hh:mm 형식 파싱
+        news_datetime = datetime.strptime(news_pub_time, "%Y.%m.%d %H:%M")
+        today = datetime.now().date()
+        
+        # 오늘 날짜인 경우만 시간 필터 적용
+        if news_datetime.date() == today:
+            if news_datetime.hour >= 9:
+                log_message(f"    ✅ 시간 필터 통과: {news_pub_time} (09시 이후)")
+                return True
+            else:
+                log_message(f"    ❌ 시간 필터 제외: {news_pub_time} (09시 이전)")
+                return False
+        else:
+            # 오늘이 아닌 날짜는 모두 포함
+            log_message(f"    ✅ 날짜 필터 통과: {news_pub_time} (오늘이 아닌 날짜)")
+            return True
+            
+    except Exception as e:
+        log_message(f"    ⚠️ 날짜 파싱 오류, 뉴스 포함: {news_pub_time} - {e}")
+        return True
 
 def save_news_data(news_list, filename=None):
     """뉴스 데이터를 JSON 파일로 저장"""
@@ -793,21 +1185,39 @@ def main():
     # 3단계: 본문 추출 및 요약
     log_message(f"\n📝 3단계: 뉴스 본문 추출 및 AI 요약 생성 중...", force=True)
     
+    # 시간 기반 필터링 조건 확인
+    time_filter_enabled = should_filter_by_time()
+    
     processed_news = []
+    filtered_count = 0
     
     for i, news in enumerate(headlines, 1):
         print(f"\n[{i:2d}/{len(headlines)}] {news['press']} - {news['title'][:60]}...", flush=True)
         
-        # 본문 추출
-        print("    📄 본문 추출 중...", flush=True)
-        content = crawl_article_content(news['url'])
+        # 본문 및 날짜 추출
+        print("    📄 본문 및 날짜 추출 중...", flush=True)
+        article_data = crawl_article_content(news['url'])
         
-        if content:
-            print(f"    ✅ 본문 추출 성공 (길이: {len(content)}자)", flush=True)
+        if article_data['content']:
+            print(f"    ✅ 본문 추출 성공 (길이: {len(article_data['content'])}자)", flush=True)
+            
+            # 날짜 업데이트
+            if article_data['pub_date']:
+                news['pub_time'] = article_data['pub_date']
+                print(f"    📅 업로드 날짜: {article_data['pub_date']}", flush=True)
+            else:
+                news['pub_time'] = datetime.now().strftime("%Y.%m.%d %H:%M")
+                print("    ⚠️ 날짜 추출 실패, 현재 시간 사용", flush=True)
+            
+            # 시간 필터링 검사
+            if not is_news_time_valid(news['pub_time'], time_filter_enabled):
+                filtered_count += 1
+                print(f"    🚫 시간 조건으로 인해 제외됨", flush=True)
+                continue
             
             # LLM 요약
             print("    🤖 AI 요약 생성 중...", flush=True)
-            summary = summarize_with_llm(content, news['title'], news['press'])
+            summary = summarize_with_llm(article_data['content'], news['title'], news['press'])
             
             if summary:
                 print(f"    📝 AI 요약: {summary}", flush=True)
@@ -817,7 +1227,14 @@ def main():
                 news['ai_summary'] = None
         else:
             print("    ❌ 본문 추출 실패", flush=True)
+            news['pub_time'] = datetime.now().strftime("%Y.%m.%d %H:%M")
             news['ai_summary'] = None
+            
+            # 시간 필터링 검사 (본문 추출 실패한 경우도)
+            if not is_news_time_valid(news['pub_time'], time_filter_enabled):
+                filtered_count += 1
+                print(f"    🚫 시간 조건으로 인해 제외됨", flush=True)
+                continue
         
         processed_news.append(news)
         
@@ -835,8 +1252,10 @@ def main():
     
     success_count = sum(1 for news in processed_news if news.get('ai_summary'))
     
-    print(f"📊 전체 뉴스: {len(processed_news)}개", flush=True)
-    print(f"✅ 요약 성공: {success_count}개", flush=True)
+    print(f"📊 크롤링된 뉴스: {len(headlines)}개", flush=True)
+    print(f"🕘 시간 필터로 제외된 뉴스: {filtered_count}개", flush=True)
+    print(f"✅ 최종 처리된 뉴스: {len(processed_news)}개", flush=True)
+    print(f"📝 요약 성공: {success_count}개", flush=True)
     print(f"❌ 요약 실패: {len(processed_news) - success_count}개", flush=True)
     
     for press in ['KBS', 'MBC', 'SBS']:

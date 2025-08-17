@@ -14,6 +14,7 @@ import tempfile
 import uuid
 import random
 import subprocess
+import pandas as pd
 
 def setup_driver():
     """Chrome 드라이버 설정 (Docker 환경 최적화)"""
@@ -173,10 +174,10 @@ def crawl_page_data(driver, wait):
             row_data = {
                 'row_number': len(page_data) + 1,
                 '고시': 고시,
-                '타이틀': 타이틀,
-                '날짜': 날짜,
+                '제목': 타이틀,
+                '업로드_날짜': 날짜,
                 'url': url,
-                'crawled_date': datetime.now().isoformat()
+                '수집날짜': datetime.now().isoformat()
             }
             
             page_data.append(row_data)
@@ -364,10 +365,17 @@ def crawl_hira_data(test_date=None):
     """하위 호환성을 위한 기존 함수 (재시도 메커니즘 사용)"""
     return crawl_hira_data_with_retry(test_date, max_retries=3)
 
-def save_to_json(data, filename=None):
+def save_to_excel(data, filename=None):
+    """수집된 데이터를 Excel 파일로 저장"""
     if filename is None:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f'hira_data_{timestamp}.json'
+        filename = f'hira_data_{timestamp}.xlsx'
+    
+    # xlsx 확장자로 변경
+    if filename.endswith('.json'):
+        filename = filename.replace('.json', '.xlsx')
+    elif not filename.endswith('.xlsx'):
+        filename += '.xlsx'
     
     # crawler_result 디렉토리에 저장 - Docker 볼륨 마운트된 경로 사용
     result_dir = '/home/son/SKN12-FINAL-AIRFLOW/crawler_result'
@@ -375,10 +383,41 @@ def save_to_json(data, filename=None):
     os.makedirs(result_dir, exist_ok=True)
     filepath = os.path.join(result_dir, filename)
     
-    with open(filepath, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    try:
+        # 데이터를 DataFrame으로 변환
+        print(f"🔄 DataFrame 변환 중... 데이터 개수: {len(data)}")
+        df = pd.DataFrame(data)
+        print(f"📊 DataFrame 생성 완료. 컬럼: {list(df.columns)}")
+        
+        # 컬럼 순서 정리 (row_number 제외하고 원하는 순서로)
+        if not df.empty:
+            columns_order = ['고시', '제목', '업로드_날짜', 'url', '수집날짜']
+            # 존재하는 컬럼만 선택
+            existing_columns = [col for col in columns_order if col in df.columns]
+            print(f"📋 선택된 컬럼: {existing_columns}")
+            df = df[existing_columns]
+        
+        # Excel 파일로 저장
+        print(f"💾 Excel 파일 저장 중: {filepath}")
+        df.to_excel(filepath, index=False, engine='openpyxl')
+        print(f"✅ Excel 파일 저장 완료: {filepath}")
+        
+    except Exception as e:
+        print(f"❌ Excel 파일 저장 실패: {e}")
+        import traceback
+        print(f"🔍 에러 상세: {traceback.format_exc()}")
+        # 실패 시 JSON으로라도 저장
+        json_filepath = filepath.replace('.xlsx', '.json')
+        with open(json_filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        print(f"📝 대신 JSON 파일로 저장: {json_filepath}")
+        return json_filepath
     
     return filepath
+
+def save_to_json(data, filename=None):
+    """하위 호환성을 위한 JSON 저장 함수 (이제 Excel로 저장)"""
+    return save_to_excel(data, filename)
 
 def main():
     print(f"HIRA 데이터 크롤링을 시작합니다 ({get_yesterday_date()} ~ {get_today_date()})...")
@@ -387,14 +426,19 @@ def main():
     data = crawl_hira_data()  # 재시도 메커니즘이 포함된 함수 호출
     
     if data:
-        filepath = save_to_json(data)
+        filepath = save_to_excel(data)
         print(f"🎉 크롤링이 성공적으로 완료되었습니다: {len(data)}개 레코드")
         print(f"💾 데이터 저장 완료: {filepath}")
     else:
         print("💥 크롤링 최종 실패!")
         print("- 모든 재시도가 실패했거나 해당 날짜 범위에 HIRA 고시 데이터가 없습니다")
 
-# 테스트 모드: 2024-08-01 ~ 2025-08-01 날짜 범위로 테스트 (재시도 메커니즘 포함)
+# 간단한 테스트 함수 (DAG에서 호출용)
+def test_crawling():
+    """간단한 테스트 크롤링 함수 (재시도 메커니즘 포함)"""
+    return test_crawling_with_retry(max_retries=3)
+
+# 테스트 모드: 2025-08-01 ~ 2025-08-01 날짜 범위로 테스트 (재시도 메커니즘 포함)
 def test_crawling_with_retry(max_retries=3):
     """재시도 메커니즘이 포함된 테스트 크롤링 함수"""
     
@@ -425,7 +469,7 @@ def test_crawling_with_retry(max_retries=3):
             # Set specific date range for test
             start_date_input = wait.until(EC.presence_of_element_located((By.XPATH, '//*[@id="startDt"]')))
             start_date_input.clear()
-            start_date_input.send_keys("2024-08-01")
+            start_date_input.send_keys("2025-08-01")
             
             end_date_input = driver.find_element(By.XPATH, '//*[@id="endDt"]')
             end_date_input.clear()
@@ -515,6 +559,11 @@ def test_crawling_with_retry(max_retries=3):
             # 성공적으로 완료됨
             if scraped_data:
                 print(f"✅ HIRA 테스트 크롤링 성공! ({attempt}/{max_retries}) - {len(scraped_data)}개 레코드 수집")
+                
+                # Excel 파일로 저장
+                filepath = save_to_excel(scraped_data, 'hira_data_test_range.xlsx')
+                print(f"💾 테스트 데이터 저장 완료: {filepath}")
+                
                 return scraped_data
             else:
                 print(f"⚠️ HIRA 테스트 크롤링 완료했지만 데이터 없음 ({attempt}/{max_retries})")
@@ -560,18 +609,6 @@ def test_crawling_with_retry(max_retries=3):
     print("💥 HIRA 테스트 크롤링 최종 실패!")
     return []
 
-def test_crawling():
-    """하위 호환성을 위한 기존 함수 (재시도 메커니즘 사용)"""
-    print("🔄 최대 3회 재시도 메커니즘 활성화")
-    data = test_crawling_with_retry(max_retries=3)
-    
-    if data:
-        filepath = save_to_json(data, "hira_data_test_range.json")
-        print(f"🎉 테스트: 크롤링이 성공적으로 완료되었습니다 - {len(data)}개 레코드")
-        print(f"💾 테스트: 데이터 저장 완료 - {filepath}")
-    else:
-        print("💥 테스트: 크롤링 최종 실패!")
-        print("- 모든 재시도가 실패했거나 해당 날짜 범위에 HIRA 고시 데이터가 없습니다")
 
 if __name__ == "__main__":
     main()

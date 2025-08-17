@@ -4,6 +4,7 @@
 import json
 import os
 import glob
+import pandas as pd
 from datetime import datetime
 from typing import List, Dict
 from openai import OpenAI
@@ -29,58 +30,63 @@ class NewsReportGenerator:
         self.report_save_path = "/home/son/SKN12-FINAL-AIRFLOW/crawler_result"
         
     def load_news_summaries(self) -> Dict[str, List[str]]:
-        """크롤러 결과에서 뉴스 요약 데이터 로딩"""
+        """오늘 날짜가 포함된 Excel 파일들에서 뉴스 요약 데이터 로딩"""
         summaries = {
             'newsstand': [],
-            'medical_trending': [],
-            'medical_recent': []
+            'medical_news': []
         }
         
+        # 오늘 날짜를 YYYYMMDD 형식으로 가져오기
+        today = datetime.now().strftime("%Y%m%d")
+        print(f"📅 오늘 날짜로 파일 검색 중: {today}")
+        
         try:
-            # newsstand_iframe에서 ai_summary 추출
-            newsstand_files = glob.glob(os.path.join(self.crawler_result_path, "newsstand_iframe_*.json"))
+            # newsstand_iframe_unique_ 파일 찾기
+            newsstand_pattern = os.path.join(self.crawler_result_path, f"newsstand_iframe_unique_{today}_*.xlsx")
+            newsstand_files = glob.glob(newsstand_pattern)
+            
+            print(f"🔍 newsstand_iframe_unique 파일 검색: {newsstand_pattern}")
+            print(f"   찾은 파일: {len(newsstand_files)}개")
+            
             for file_path in newsstand_files:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    if isinstance(data, list):
-                        for item in data:
-                            if 'ai_summary' in item and item['ai_summary']:
-                                summaries['newsstand'].append({
-                                    'title': item.get('title', ''),
-                                    'summary': item['ai_summary'],
-                                    'press': item.get('press', ''),
-                                    'url': item.get('url', '')
-                                })
+                print(f"   📊 처리 중: {os.path.basename(file_path)}")
+                try:
+                    df = pd.read_excel(file_path)
+                    for _, row in df.iterrows():
+                        if pd.notna(row.get('요약', '')) and str(row.get('요약', '')).strip():
+                            summaries['newsstand'].append({
+                                'title': str(row.get('제목', '')),
+                                'summary': str(row.get('요약', '')),
+                                'press': str(row.get('언론사', '')),
+                                'url': str(row.get('url', '')),
+                                'upload_date': str(row.get('업로드_날짜', ''))
+                            })
+                except Exception as e:
+                    print(f"   ❌ 파일 읽기 오류: {e}")
             
-            # medical_top_trending_news에서 summary 추출
-            trending_files = glob.glob(os.path.join(self.crawler_result_path, "medical_top_trending_news_*.json"))
-            for file_path in trending_files:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    if 'news_list' in data:
-                        for item in data['news_list']:
-                            if 'summary' in item and item['summary']:
-                                summaries['medical_trending'].append({
-                                    'title': item.get('title', ''),
-                                    'summary': item['summary'],
-                                    'url': item.get('url', ''),
-                                    'date': item.get('date', '')
-                                })
+            # medical_news_unique_ 파일 찾기
+            medical_pattern = os.path.join(self.crawler_result_path, f"medical_news_unique_{today}_*.xlsx")
+            medical_files = glob.glob(medical_pattern)
             
-            # medical_recent_news에서 summary 추출
-            recent_files = glob.glob(os.path.join(self.crawler_result_path, "medical_recent_news_*.json"))
-            for file_path in recent_files:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    if 'news_list' in data:
-                        for item in data['news_list']:
-                            if 'summary' in item and item['summary']:
-                                summaries['medical_recent'].append({
-                                    'title': item.get('title', ''),
-                                    'summary': item['summary'],
-                                    'url': item.get('url', ''),
-                                    'date': item.get('date', '')
-                                })
+            print(f"🔍 medical_news_unique 파일 검색: {medical_pattern}")
+            print(f"   찾은 파일: {len(medical_files)}개")
+            
+            for file_path in medical_files:
+                print(f"   📊 처리 중: {os.path.basename(file_path)}")
+                try:
+                    df = pd.read_excel(file_path)
+                    for _, row in df.iterrows():
+                        if pd.notna(row.get('요약', '')) and str(row.get('요약', '')).strip():
+                            summaries['medical_news'].append({
+                                'title': str(row.get('제목', '')),
+                                'summary': str(row.get('요약', '')),
+                                'press': str(row.get('언론사', '')),
+                                'url': str(row.get('url', '')),
+                                'upload_date': str(row.get('업로드_날짜', '')),
+                                'type': str(row.get('타입', ''))
+                            })
+                except Exception as e:
+                    print(f"   ❌ 파일 읽기 오류: {e}")
                                 
         except Exception as e:
             print(f"뉴스 데이터 로딩 중 오류 발생: {e}")
@@ -92,7 +98,7 @@ class NewsReportGenerator:
         return """
 당신은 제약영업회사의 최고전략분석가입니다.
 입력으로 제공된 “뉴스 요약 목록 + 회사 컨텍스트”를 바탕으로, 한국 제약 영업 환경과 글로벌 동향을 통합 분석하여 실행 가능한 전략 리포트를 작성하세요.
-제약영업회사에 관련된 뉴스가 없다면 작성하지 않아도 됩니다.
+제약영업회사에 관련된 뉴스가 없다면 작성하지 않는다.
 
 ## 1. 분석 원칙
 - 기사에 기반한 **팩트**와 당신의 **추정/가정**을 명확히 구분하고, 추정에는 불확실성 등급(L/M/H)을 부여.
@@ -206,22 +212,16 @@ class NewsReportGenerator:
             for i, item in enumerate(summaries['newsstand'][:10], 1):  # 최대 10개
                 content += f"{i}. [{item['press']}] {item['title'][:100]}...\n"
                 content += f"   요약: {item['summary']}\n"
+                content += f"   업로드날짜: {item['upload_date']}\n"
                 content += f"   URL: {item['url']}\n\n"
         
-        if summaries['medical_trending']:
-            content += "=== 의료업계 주요 이슈 ===\n"
-            for i, item in enumerate(summaries['medical_trending'][:15], 1):  # 최대 15개
-                content += f"{i}. {item['title'][:100]}...\n"
+        if summaries['medical_news']:
+            content += "=== 의료업계 뉴스 동향 ===\n"
+            for i, item in enumerate(summaries['medical_news'][:20], 1):  # 최대 20개
+                content += f"{i}. [{item['press']}] {item['title'][:100]}...\n"
                 content += f"   요약: {item['summary']}\n"
-                content += f"   날짜: {item['date']}\n"
-                content += f"   URL: {item['url']}\n\n"
-        
-        if summaries['medical_recent']:
-            content += "=== 최신 의료 뉴스 ===\n"
-            for i, item in enumerate(summaries['medical_recent'][:10], 1):  # 최대 10개
-                content += f"{i}. {item['title'][:100]}...\n"
-                content += f"   요약: {item['summary']}\n"
-                content += f"   날짜: {item['date']}\n"
+                content += f"   타입: {item['type']}\n"
+                content += f"   업로드날짜: {item['upload_date']}\n"
                 content += f"   URL: {item['url']}\n\n"
         
         return content
@@ -274,8 +274,7 @@ class NewsReportGenerator:
         total_news = sum(len(items) for items in summaries.values())
         print(f"총 {total_news}개의 뉴스 요약을 로딩했습니다.")
         print(f"- 일반 뉴스: {len(summaries['newsstand'])}개")
-        print(f"- 의료 트렌딩 뉴스: {len(summaries['medical_trending'])}개")
-        print(f"- 최신 의료 뉴스: {len(summaries['medical_recent'])}개")
+        print(f"- 의료 뉴스: {len(summaries['medical_news'])}개")
         
         if total_news == 0:
             return "분석할 뉴스 데이터가 없습니다."

@@ -197,34 +197,94 @@ def run_news_crawler():
         logging.error(f"❌ 뉴스 크롤러 실행 중 오류: {e}")
         raise
 
-def check_and_notify(**context):
-    """크롤링 결과 확인"""
+def create_excel_report(**context):
+    """JSON 데이터를 Excel로 변환"""
     try:
         # 이전 태스크 결과 가져오기
         task_result = context['task_instance'].xcom_pull(task_ids='run_crawler')
         
         if task_result and task_result.get('status') == 'success':
+            logging.info("📊 Excel 파일 생성 시작")
+            
+            # newsstand_iframe_preprocessing.py 임포트
+            if os.getenv('AIRFLOW__CORE__EXECUTOR'):  # Docker 환경
+                preprocessing_script = '/opt/airflow/func/newsstand_iframe_preprocessing.py'
+            else:  # 로컬 환경
+                preprocessing_script = os.path.join(os.path.dirname(current_dir), 'func', 'newsstand_iframe_preprocessing.py')
+            
+            # sys.path에 func 디렉토리 추가
+            func_dir = '/opt/airflow/func' if os.getenv('AIRFLOW__CORE__EXECUTOR') else os.path.join(os.path.dirname(current_dir), 'func')
+            if func_dir not in sys.path:
+                sys.path.append(func_dir)
+            
+            # 모듈 임포트 및 실행
+            try:
+                import newsstand_iframe_preprocessing
+                
+                # 모듈 리로드 (최신 코드 반영)
+                import importlib
+                importlib.reload(newsstand_iframe_preprocessing)
+                
+                # Excel 파일 생성 함수 실행
+                result_df = newsstand_iframe_preprocessing.preprocess_newsstand_iframe()
+                
+                if result_df is not None and len(result_df) > 0:
+                    logging.info(f"✅ Excel 파일 생성 완료: {len(result_df)}개 기사 처리")
+                    return {'status': 'success', 'processed_count': len(result_df)}
+                else:
+                    logging.warning("⚠️ Excel 파일 생성됨, 하지만 데이터가 없음")
+                    return {'status': 'warning', 'message': '처리할 데이터 없음'}
+                    
+            except ImportError as e:
+                logging.error(f"❌ 모듈 임포트 실패: {e}")
+                return {'status': 'error', 'message': f'모듈 임포트 실패: {e}'}
+            except Exception as e:
+                logging.error(f"❌ Excel 파일 생성 실패: {e}")
+                return {'status': 'error', 'message': f'Excel 생성 실패: {e}'}
+                
+        else:
+            logging.warning("⚠️ 크롤링이 성공하지 않아 Excel 생성을 건너뜁니다.")
+            return {'status': 'skipped', 'message': '크롤링 실패로 건너뜀'}
+            
+    except Exception as e:
+        logging.error(f"❌ Excel 생성 태스크 실행 중 오류: {e}")
+        return {'status': 'error', 'message': str(e)}
+
+
+def check_and_notify(**context):
+    """크롤링 결과 확인"""
+    try:
+        # 이전 태스크 결과 가져오기
+        crawler_result = context['task_instance'].xcom_pull(task_ids='run_crawler')
+        excel_result = context['task_instance'].xcom_pull(task_ids='prepro_and_create_excel')
+        
+        if crawler_result and crawler_result.get('status') == 'success':
             logging.info("✅ 크롤링 성공")
             
             # 결과 파일 정보
-            result_file = task_result.get('file', 'Unknown')
+            result_file = crawler_result.get('file', 'Unknown')
             file_name = os.path.basename(result_file) if result_file != 'Unknown' else 'Unknown'
+            
+            # Excel 생성 결과
+            excel_status = excel_result.get('status', 'unknown') if excel_result else 'unknown'
+            excel_count = excel_result.get('processed_count', 0) if excel_result else 0
             
             logging.info(f"📊 실행 정보:")
             logging.info(f"- 실행 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             logging.info(f"- 생성 파일: {file_name}")
             logging.info(f"- 대상 언론사: KBS, MBC, SBS")
             logging.info(f"- 파일 위치: {result_file}")
+            logging.info(f"- Excel 생성: {excel_status} ({excel_count}개 기사 처리)")
             logging.info("✅ 모든 뉴스에 대한 AI 요약이 생성되었습니다.")
             
-            return {'status': 'success', 'file': result_file}
+            return {'status': 'success', 'file': result_file, 'excel_status': excel_status, 'excel_count': excel_count}
         else:
             logging.warning("⚠️ 크롤링 부분 성공 또는 실패")
             logging.warning(f"실행 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            logging.warning(f"상태: {task_result.get('status', 'Unknown') if task_result else 'Failed'}")
-            logging.warning(f"메시지: {task_result.get('message', 'No message') if task_result else 'Task failed'}")
+            logging.warning(f"상태: {crawler_result.get('status', 'Unknown') if crawler_result else 'Failed'}")
+            logging.warning(f"메시지: {crawler_result.get('message', 'No message') if crawler_result else 'Task failed'}")
             
-            return {'status': 'warning', 'message': task_result.get('message', 'No message') if task_result else 'Task failed'}
+            return {'status': 'warning', 'message': crawler_result.get('message', 'No message') if crawler_result else 'Task failed'}
             
     except Exception as e:
         logging.error(f"❌ 결과 확인 중 오류: {e}")
@@ -240,6 +300,13 @@ crawler_task = PythonOperator(
     execution_timeout=timedelta(minutes=30)
 )
 
+prepro_and_create_excel_task = PythonOperator(
+    task_id='prepro_and_create_excel',
+    python_callable=create_excel_report,
+    dag=dag,
+    execution_timeout=timedelta(minutes=10)
+)
+
 check_task = PythonOperator(
     task_id='check_result',
     python_callable=check_and_notify,
@@ -247,7 +314,7 @@ check_task = PythonOperator(
 )
 
 # Task 의존성 설정
-crawler_task >> check_task
+crawler_task >> prepro_and_create_excel_task >> check_task
 
 # DAG 문서화
 dag.doc_md = """
@@ -263,12 +330,20 @@ dag.doc_md = """
 ## 주요 기능
 1. **뉴스 수집**: iframe 기반으로 KBS/MBC/SBS 뉴스 크롤링
 2. **AI 요약**: OpenAI GPT를 사용한 뉴스 요약 생성
-3. **결과 저장**: JSON 형태로 파일 저장
+3. **Excel 변환**: JSON 데이터를 Excel 형태로 변환 및 전처리
+4. **결과 저장**: JSON 및 Excel 형태로 파일 저장
 
 ## 환경 설정
 - `OPENAI_API_KEY`: OpenAI API 키 (필수)
 - Chrome/ChromeDriver 설치 필요
+- `openpyxl` 패키지 필요 (Excel 생성용)
 
 ## 산출물
 - `newsstand_YYYYMMDD_HHMMSS.json`: 크롤링 결과 파일 (JSON 형식)
+- `newsstand_iframe_processed_YYYYMMDD_HHMMSS.xlsx`: 전처리된 Excel 파일
+
+## Task 순서
+1. `run_crawler`: 뉴스 크롤링 및 AI 요약 생성
+2. `prepro_and_create_excel`: JSON 데이터를 Excel로 변환
+3. `check_result`: 전체 결과 확인 및 로깅
 """

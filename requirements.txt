@@ -7,4 +7,4 @@ langchain-openai
 langchain-core
 langchain
 openai
-openpyxl==3.1.2
+openpyxl

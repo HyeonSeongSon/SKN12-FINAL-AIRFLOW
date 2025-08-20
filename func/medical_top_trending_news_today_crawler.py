@@ -131,15 +131,15 @@ def collect_news_urls(driver):
     
     news_urls = []
     
-    # 컨테이너 1: dl[n]/dt/a 패턴
-    container1_xpath = "//*[@id='main_con']/div[1]/div/div[2]/div[2]/div[1]"
+    # 컨테이너 1: dl[n]/dt/a 패턴 (새로운 구조)
+    container1_xpath = "//*[@id='main_con']/div[2]/div/div[2]/div[2]/div[1]"
     print(f"📦 컨테이너 1 검색 (dl/dt/a 패턴): {container1_xpath}")
     
     try:
         container1 = WebDriverWait(driver, 5).until(
             EC.presence_of_element_located((By.XPATH, container1_xpath))
         )
-        print(f"✅ 컨테이너 1 발견")
+        print(f"✅ 컨테이너 1 발견 (새 구조)")
         
         # dl 요소들 찾기
         dl_elements = container1.find_elements(By.TAG_NAME, "dl")
@@ -181,15 +181,15 @@ def collect_news_urls(driver):
     except Exception as e:
         print(f"❌ 컨테이너 1 처리 실패: {e}")
     
-    # 컨테이너 2: p[n]/a 패턴
-    container2_xpath = "//*[@id='main_con']/div[1]/div/div[2]/div[2]/div[2]"
+    # 컨테이너 2: p[n]/a 패턴 (새로운 구조)
+    container2_xpath = "//*[@id='main_con']/div[2]/div/div[2]/div[2]/div[2]"
     print(f"📦 컨테이너 2 검색 (p/a 패턴): {container2_xpath}")
     
     try:
         container2 = WebDriverWait(driver, 5).until(
             EC.presence_of_element_located((By.XPATH, container2_xpath))
         )
-        print(f"✅ 컨테이너 2 발견")
+        print(f"✅ 컨테이너 2 발견 (새 구조)")
         
         # p 요소들 찾기
         p_elements = container2.find_elements(By.TAG_NAME, "p")
@@ -237,8 +237,8 @@ def collect_news_urls(driver):
 def extract_article_date_yakup(driver, soup=None):
     """약업닷컴 기사에서 업로드 날짜 추출 (직접 XPath 사용)"""
     try:
-        # 사용자가 제공한 정확한 XPath 사용
-        date_xpath = "//*[@id='main_con']/div[1]/div/div[1]/div[1]/div[2]/div[2]"
+        # 새로운 사이트 구조에 맞는 XPath 사용
+        date_xpath = "//*[@id='main_con']/div[2]/div/div[1]/div[1]/div[2]/div[2]"
         
         try:
             date_element = WebDriverWait(driver, 3).until(
@@ -464,21 +464,24 @@ def crawl_news_detail(driver, news_url, rank):
             news_info['pub_time'] = datetime.now().strftime("%Y.%m.%d %H:%M")
             print("   ⚠️ 날짜 추출 실패, 현재 시간 사용")
         
-        # 제목 추출 (//*[@id="main_con"]/div[1]/div/div[1]/div[1])
+        # 제목 추출 - main_con에서 추출하고 첫 줄만 사용
         try:
-            title_xpath = "//*[@id='main_con']/div[1]/div/div[1]/div[1]"
+            title_xpath = "//*[@id='main_con']/div[2]/div/div[1]/div[1]"
             title_element = WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located((By.XPATH, title_xpath))
             )
-            news_info['title'] = title_element.text.strip()
+            full_text = title_element.text.strip()
+            # 첫 번째 줄만 제목으로 사용
+            first_line = full_text.split('\n')[0].strip()
+            news_info['title'] = first_line
             print(f"   ✅ 제목: {news_info['title']}")
         except Exception as e:
             print(f"   ❌ 제목 추출 실패: {e}")
             news_info['title'] = f"제목 추출 실패"
         
-        # 내용 추출 (//*[@id="main_con"]/div[1]/div/div[1]/div[2]/div[2]/span)
+        # 내용 추출 (새 구조)
         try:
-            content_xpath = "//*[@id='main_con']/div[1]/div/div[1]/div[2]/div[2]/span"
+            content_xpath = "//*[@id='main_con']/div[2]/div/div[1]/div[2]/div[2]/span"
             content_elements = driver.find_elements(By.XPATH, content_xpath)
             
             if content_elements:

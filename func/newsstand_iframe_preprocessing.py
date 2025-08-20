@@ -16,14 +16,16 @@ def preprocess_newsstand_iframe():
         print("newsstand_iframe JSON 파일을 찾을 수 없습니다.")
         return
     
-    if len(json_files) < 2:
-        print("비교할 파일이 부족합니다. 최소 2개 파일이 필요합니다.")
-        return
-    
-    # 파일들을 생성 시간 기준으로 정렬 (가장 최신 파일을 찾기 위해)
-    json_files.sort(key=os.path.getctime)
-    latest_file = json_files[-1]  # 가장 최신 파일
-    other_files = json_files[:-1]  # 나머지 파일들
+    # 파일이 1개만 있어도 처리하도록 수정
+    if len(json_files) == 1:
+        print("비교할 다른 파일이 없습니다. 전체 데이터를 Excel로 저장합니다.")
+        latest_file = json_files[0]
+        other_files = []  # 비교할 파일이 없음
+    else:
+        # 파일들을 생성 시간 기준으로 정렬 (가장 최신 파일을 찾기 위해)
+        json_files.sort(key=os.path.getctime)
+        latest_file = json_files[-1]  # 가장 최신 파일
+        other_files = json_files[:-1]  # 나머지 파일들
     
     print(f"가장 최신 파일: {os.path.basename(latest_file)}")
     print(f"비교할 다른 파일들: {len(other_files)}개")
@@ -46,66 +48,78 @@ def preprocess_newsstand_iframe():
     
     print(f"최신 파일에서 {len(latest_data)}개 기사 발견")
     
-    # 2. 다른 모든 파일들에서 URL과 title 조합 수집
-    print(f"\n다른 파일들에서 기존 URL과 title 조합 수집 중...")
+    # 2. 다른 파일이 있는 경우에만 URL과 title 조합 수집
     existing_url_title_pairs = set()
     
-    for file_path in other_files:
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            if isinstance(data, list):
-                file_pairs = []
-                for item in data:
-                    url = item.get('url', '').strip()
-                    title = item.get('title', '').strip()
-                    if url and title:
-                        # URL과 title을 조합해서 저장
-                        pair = (url, title)
-                        existing_url_title_pairs.add(pair)
-                        file_pairs.append(pair)
+    if other_files:
+        print(f"\n다른 파일들에서 기존 URL과 title 조합 수집 중...")
+        
+        for file_path in other_files:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
                 
-                print(f"  - {os.path.basename(file_path)}: {len(file_pairs)}개 URL-title 조합")
-            
-        except Exception as e:
-            print(f"  - {os.path.basename(file_path)}: 읽기 실패 ({e})")
-            continue
+                if isinstance(data, list):
+                    file_pairs = []
+                    for item in data:
+                        url = item.get('url', '').strip()
+                        title = item.get('title', '').strip()
+                        if url and title:
+                            # URL과 title을 조합해서 저장
+                            pair = (url, title)
+                            existing_url_title_pairs.add(pair)
+                            file_pairs.append(pair)
+                    
+                    print(f"  - {os.path.basename(file_path)}: {len(file_pairs)}개 URL-title 조합")
+                
+            except Exception as e:
+                print(f"  - {os.path.basename(file_path)}: 읽기 실패 ({e})")
+                continue
+        
+        print(f"총 기존 URL-title 조합: {len(existing_url_title_pairs)}개")
+    else:
+        print("\n비교할 다른 파일이 없으므로 중복 필터링을 건너뜁니다.")
     
-    print(f"총 기존 URL-title 조합: {len(existing_url_title_pairs)}개")
-    
-    # 3. 최신 파일에서 URL과 title이 모두 중복되지 않는 기사만 필터링
-    print(f"\nURL과 title 중복 필터링 중...")
+    # 3. 최신 파일에서 기사 필터링
     unique_articles = []
     duplicate_count = 0
+    
+    if other_files:
+        print(f"\nURL과 title 중복 필터링 중...")
+    else:
+        print(f"\n전체 기사를 처리 중...")
     
     for item in latest_data:
         url = item.get('url', '').strip()
         title = item.get('title', '').strip()
         
         if url and title:
-            # URL과 title 조합 생성
-            current_pair = (url, title)
-            
-            # URL과 title이 모두 일치하는 조합이 기존에 없는 경우만 포함
-            if current_pair not in existing_url_title_pairs:
-                # title이 1000자를 넘는 경우 \n을 기준으로 split하고 첫 번째 부분만 사용
-                display_title = title
-                if len(title) > 1000:
-                    split_parts = title.split('\n')
-                    display_title = split_parts[0] if split_parts else title
+            # 비교 파일이 있는 경우에만 중복 체크
+            if other_files:
+                # URL과 title 조합 생성
+                current_pair = (url, title)
                 
-                processed_item = {
-                    '제목': display_title,
-                    'url': url,
-                    '언론사': item.get('press', ''),
-                    '업로드_날짜': item.get('pub_time', ''),
-                    '타입': item.get('type', ''),
-                    '요약': item.get('ai_summary', '')
-                }
-                unique_articles.append(processed_item)
-            else:
-                duplicate_count += 1
+                # URL과 title이 모두 일치하는 조합이 기존에 없는 경우만 포함
+                if current_pair in existing_url_title_pairs:
+                    duplicate_count += 1
+                    continue
+            
+            # 중복이 아니거나 비교 파일이 없는 경우 처리
+            # title이 1000자를 넘는 경우 \n을 기준으로 split하고 첫 번째 부분만 사용
+            display_title = title
+            if len(title) > 1000:
+                split_parts = title.split('\n')
+                display_title = split_parts[0] if split_parts else title
+            
+            processed_item = {
+                '제목': display_title,
+                'url': url,
+                '언론사': item.get('press', ''),
+                '업로드_날짜': item.get('pub_time', ''),
+                '타입': item.get('type', ''),
+                '요약': item.get('ai_summary', '')
+            }
+            unique_articles.append(processed_item)
         else:
             # URL이나 title이 없는 경우는 제외
             duplicate_count += 1

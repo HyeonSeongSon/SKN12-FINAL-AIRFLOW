@@ -235,105 +235,110 @@ def upload_strategy_report_to_db(**context):
         return {'status': 'error', 'message': str(e)}
 
 def cleanup_report_files(**context):
-    """업로드 성공한 리포트 .md 파일 삭제"""
+    """리포트 .md 파일 삭제 (업로드 상태와 관계없이 항상 실행)"""
     try:
         # 이전 태스크 결과 가져오기
         upload_result = context['task_instance'].xcom_pull(task_ids='upload_report')
         
-        # 업로드가 성공한 경우에만 파일 삭제
-        if upload_result and upload_result.get('status') == 'success':
-            logging.info("🗑️ 리포트 .md 파일 삭제 시작...")
-            
-            # clear_files 모듈 import
-            import sys
-            if os.getenv('AIRFLOW__CORE__EXECUTOR'):  # Docker 환경
-                func_dir = '/opt/airflow/func'
-            else:  # 로컬 환경
-                func_dir = os.path.join(os.path.dirname(current_dir), 'func')
-            
-            if func_dir not in sys.path:
-                sys.path.append(func_dir)
-            
-            from clear_files import clear_excel_files
-            
-            # 리포트 .md 파일 삭제 실행
-            clear_excel_files(file_type='news_report')
-            
-            logging.info("✅ 리포트 .md 파일 삭제 완료")
-            return {'status': 'success', 'message': 'Report files cleaned up successfully'}
-        else:
-            logging.warning("⚠️ 업로드가 성공하지 않아 파일 삭제를 건너뜁니다.")
-            return {'status': 'skipped', 'message': 'Upload was not successful'}
+        # 업로드 결과 로깅
+        if upload_result:
+            upload_status = upload_result.get('status', 'unknown')
+            logging.info(f"📊 업로드 태스크 상태: {upload_status}")
+            if upload_status == 'error':
+                logging.warning(f"⚠️ 업로드 실패 이유: {upload_result.get('message', '알 수 없음')}")
+        
+        # 업로드 상태와 관계없이 항상 파일 삭제 실행
+        logging.info("🗑️ 리포트 .md 파일 삭제 시작...")
+        
+        # clear_files 모듈 import
+        import sys
+        if os.getenv('AIRFLOW__CORE__EXECUTOR'):  # Docker 환경
+            func_dir = '/opt/airflow/func'
+        else:  # 로컬 환경
+            func_dir = os.path.join(os.path.dirname(current_dir), 'func')
+        
+        if func_dir not in sys.path:
+            sys.path.append(func_dir)
+        
+        from clear_files import clear_excel_files
+        
+        # 리포트 .md 파일 삭제 실행
+        clear_excel_files(file_type='news_report')
+        
+        logging.info("✅ 리포트 .md 파일 삭제 완료")
+        return {'status': 'success', 'message': 'Report files cleaned up successfully'}
             
     except Exception as e:
         logging.error(f"❌ 리포트 파일 삭제 중 오류: {e}")
         return {'status': 'error', 'message': str(e)}
 
 def cleanup_medical_files(**context):
-    """Medical 뉴스 Excel 파일 삭제"""
+    """Medical 뉴스 Excel 파일 삭제 (이전 태스크 상태와 관계없이 항상 실행)"""
     try:
-        # 이전 태스크 결과 가져오기 (report 파일 삭제가 성공했을 때만 실행)
+        # 이전 태스크 결과 가져오기
         report_cleanup_result = context['task_instance'].xcom_pull(task_ids='cleanup_report_files')
         
-        # 이전 삭제가 성공하거나 스킵된 경우 실행
-        if report_cleanup_result and report_cleanup_result.get('status') in ['success', 'skipped']:
-            logging.info("🗑️ Medical 뉴스 Excel 파일 삭제 시작...")
-            
-            # clear_files 모듈 import
-            import sys
-            if os.getenv('AIRFLOW__CORE__EXECUTOR'):  # Docker 환경
-                func_dir = '/opt/airflow/func'
-            else:  # 로컬 환경
-                func_dir = os.path.join(os.path.dirname(current_dir), 'func')
-            
-            if func_dir not in sys.path:
-                sys.path.append(func_dir)
-            
-            from clear_files import clear_excel_files
-            
-            # Medical Excel 파일 삭제 실행
-            clear_excel_files(file_type='medical')
-            
-            logging.info("✅ Medical 뉴스 Excel 파일 삭제 완료")
-            return {'status': 'success', 'message': 'Medical files cleaned up successfully'}
-        else:
-            logging.warning("⚠️ 이전 단계가 완료되지 않아 파일 삭제를 건너뜁니다.")
-            return {'status': 'skipped', 'message': 'Previous cleanup was not completed'}
+        # 이전 태스크 결과 로깅
+        if report_cleanup_result:
+            cleanup_status = report_cleanup_result.get('status', 'unknown')
+            logging.info(f"📊 리포트 삭제 태스크 상태: {cleanup_status}")
+        
+        # 상태와 관계없이 항상 파일 삭제 실행
+        logging.info("🗑️ Medical 뉴스 Excel 파일 삭제 시작...")
+        
+        # clear_files 모듈 import
+        import sys
+        if os.getenv('AIRFLOW__CORE__EXECUTOR'):  # Docker 환경
+            func_dir = '/opt/airflow/func'
+        else:  # 로컬 환경
+            func_dir = os.path.join(os.path.dirname(current_dir), 'func')
+        
+        if func_dir not in sys.path:
+            sys.path.append(func_dir)
+        
+        from clear_files import clear_excel_files
+        
+        # Medical Excel 파일 삭제 실행
+        clear_excel_files(file_type='medical')
+        
+        logging.info("✅ Medical 뉴스 Excel 파일 삭제 완료")
+        return {'status': 'success', 'message': 'Medical files cleaned up successfully'}
             
     except Exception as e:
         logging.error(f"❌ Medical 파일 삭제 중 오류: {e}")
         return {'status': 'error', 'message': str(e)}
 
 def cleanup_newsstand_files(**context):
-    """Newsstand Excel 파일 삭제"""
+    """Newsstand Excel 파일 삭제 (이전 태스크 상태와 관계없이 항상 실행)"""
     try:
-        # 이전 태스크 결과 가져오기 (medical 파일 삭제가 성공했을 때만 실행)
+        # 이전 태스크 결과 가져오기
         medical_cleanup_result = context['task_instance'].xcom_pull(task_ids='cleanup_medical_files')
         
-        # 이전 삭제가 성공하거나 스킵된 경우 실행
-        if medical_cleanup_result and medical_cleanup_result.get('status') in ['success', 'skipped']:
-            logging.info("🗑️ Newsstand Excel 파일 삭제 시작...")
-            
-            # clear_files 모듈 import
-            import sys
-            if os.getenv('AIRFLOW__CORE__EXECUTOR'):  # Docker 환경
-                func_dir = '/opt/airflow/func'
-            else:  # 로컬 환경
-                func_dir = os.path.join(os.path.dirname(current_dir), 'func')
-            
-            if func_dir not in sys.path:
-                sys.path.append(func_dir)
-            
-            from clear_files import clear_excel_files
-            
-            # Newsstand Excel 파일 삭제 실행
-            clear_excel_files(file_type='newsstand')
-            
-            logging.info("✅ Newsstand Excel 파일 삭제 완료")
-            return {'status': 'success', 'message': 'Newsstand files cleaned up successfully'}
-        else:
-            logging.warning("⚠️ 이전 단계가 완료되지 않아 파일 삭제를 건너뜁니다.")
-            return {'status': 'skipped', 'message': 'Previous cleanup was not completed'}
+        # 이전 태스크 결과 로깅
+        if medical_cleanup_result:
+            cleanup_status = medical_cleanup_result.get('status', 'unknown')
+            logging.info(f"📊 Medical 삭제 태스크 상태: {cleanup_status}")
+        
+        # 상태와 관계없이 항상 파일 삭제 실행
+        logging.info("🗑️ Newsstand Excel 파일 삭제 시작...")
+        
+        # clear_files 모듈 import
+        import sys
+        if os.getenv('AIRFLOW__CORE__EXECUTOR'):  # Docker 환경
+            func_dir = '/opt/airflow/func'
+        else:  # 로컬 환경
+            func_dir = os.path.join(os.path.dirname(current_dir), 'func')
+        
+        if func_dir not in sys.path:
+            sys.path.append(func_dir)
+        
+        from clear_files import clear_excel_files
+        
+        # Newsstand Excel 파일 삭제 실행
+        clear_excel_files(file_type='newsstand')
+        
+        logging.info("✅ Newsstand Excel 파일 삭제 완료")
+        return {'status': 'success', 'message': 'Newsstand files cleaned up successfully'}
             
     except Exception as e:
         logging.error(f"❌ Newsstand 파일 삭제 중 오류: {e}")

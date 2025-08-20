@@ -19,14 +19,16 @@ def process_medical_recent_news():
         print("medical_recent_news JSON 파일을 찾을 수 없습니다.")
         return []
     
-    if len(json_files) < 2:
-        print("비교할 파일이 부족합니다. 최소 2개 파일이 필요합니다.")
-        return []
-    
-    # 파일들을 생성 시간 기준으로 정렬 (가장 최신 파일을 찾기 위해)
-    json_files.sort(key=os.path.getctime)
-    latest_file = json_files[-1]  # 가장 최신 파일
-    other_files = json_files[:-1]  # 나머지 파일들
+    # 파일이 1개만 있어도 처리하도록 수정
+    if len(json_files) == 1:
+        print("비교할 다른 파일이 없습니다. 전체 데이터를 Excel로 저장합니다.")
+        latest_file = json_files[0]
+        other_files = []  # 비교할 파일이 없음
+    else:
+        # 파일들을 생성 시간 기준으로 정렬 (가장 최신 파일을 찾기 위해)
+        json_files.sort(key=os.path.getctime)
+        latest_file = json_files[-1]  # 가장 최신 파일
+        other_files = json_files[:-1]  # 나머지 파일들
     
     print(f"가장 최신 파일: {os.path.basename(latest_file)}")
     print(f"비교할 다른 파일들: {len(other_files)}개")
@@ -48,47 +50,60 @@ def process_medical_recent_news():
     
     print(f"최신 파일에서 {len(latest_news_list)}개 기사 발견")
     
-    # 2. 다른 모든 파일들에서 URL과 title 조합 수집
+    # 2. 다른 파일이 있는 경우에만 URL과 title 조합 수집
     existing_url_title_pairs = set()
     
-    for file_path in other_files:
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            if isinstance(data, dict) and 'news_list' in data:
-                news_list = data['news_list']
-                for item in news_list:
-                    url = item.get('url', '').strip()
-                    title = item.get('title', '').strip()
-                    if url and title:
-                        existing_url_title_pairs.add((url, title))
-        except Exception:
-            continue
+    if other_files:
+        print("\n다른 파일들에서 기존 URL과 title 조합 수집 중...")
+        for file_path in other_files:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                if isinstance(data, dict) and 'news_list' in data:
+                    news_list = data['news_list']
+                    for item in news_list:
+                        url = item.get('url', '').strip()
+                        title = item.get('title', '').strip()
+                        if url and title:
+                            existing_url_title_pairs.add((url, title))
+            except Exception:
+                continue
+        print(f"총 기존 URL-title 조합: {len(existing_url_title_pairs)}개")
+    else:
+        print("\n비교할 다른 파일이 없으므로 중복 필터링을 건너뜁니다.")
     
-    # 3. 최신 파일에서 중복되지 않는 기사만 필터링
+    # 3. 최신 파일에서 기사 필터링
     unique_articles = []
     duplicate_count = 0
+    
+    if other_files:
+        print("\nURL과 title 중복 필터링 중...")
+    else:
+        print("\n전체 기사를 처리 중...")
     
     for item in latest_news_list:
         url = item.get('url', '').strip()
         title = item.get('title', '').strip()
         
         if url and title:
-            current_pair = (url, title)
+            # 비교 파일이 있는 경우에만 중복 체크
+            if other_files:
+                current_pair = (url, title)
+                if current_pair in existing_url_title_pairs:
+                    duplicate_count += 1
+                    continue
             
-            if current_pair not in existing_url_title_pairs:
-                processed_item = {
-                    '제목': title,
-                    'url': url,
-                    '언론사': 'yakup.com',  # 고정값
-                    '업로드_날짜': item.get('date', ''),
-                    '타입': 'medical news',  # 고정값
-                    '요약': item.get('summary', '')
-                }
-                unique_articles.append(processed_item)
-            else:
-                duplicate_count += 1
+            # 중복이 아니거나 비교 파일이 없는 경우 처리
+            processed_item = {
+                '제목': title,
+                'url': url,
+                '언론사': 'yakup.com',  # 고정값
+                '업로드_날짜': item.get('pub_time', ''),
+                '타입': 'medical news',  # 고정값
+                '요약': item.get('summary', '')
+            }
+            unique_articles.append(processed_item)
         else:
             duplicate_count += 1
     
@@ -114,14 +129,16 @@ def process_medical_top_trending_news():
         print("medical_top_trending_news JSON 파일을 찾을 수 없습니다.")
         return []
     
-    if len(json_files) < 2:
-        print("비교할 파일이 부족합니다. 최소 2개 파일이 필요합니다.")
-        return []
-    
-    # 파일들을 생성 시간 기준으로 정렬 (가장 최신 파일을 찾기 위해)
-    json_files.sort(key=os.path.getctime)
-    latest_file = json_files[-1]  # 가장 최신 파일
-    other_files = json_files[:-1]  # 나머지 파일들
+    # 파일이 1개만 있어도 처리하도록 수정
+    if len(json_files) == 1:
+        print("비교할 다른 파일이 없습니다. 전체 데이터를 Excel로 저장합니다.")
+        latest_file = json_files[0]
+        other_files = []  # 비교할 파일이 없음
+    else:
+        # 파일들을 생성 시간 기준으로 정렬 (가장 최신 파일을 찾기 위해)
+        json_files.sort(key=os.path.getctime)
+        latest_file = json_files[-1]  # 가장 최신 파일
+        other_files = json_files[:-1]  # 나머지 파일들
     
     print(f"가장 최신 파일: {os.path.basename(latest_file)}")
     print(f"비교할 다른 파일들: {len(other_files)}개")
@@ -143,47 +160,60 @@ def process_medical_top_trending_news():
     
     print(f"최신 파일에서 {len(latest_news_list)}개 기사 발견")
     
-    # 2. 다른 모든 파일들에서 URL과 title 조합 수집
+    # 2. 다른 파일이 있는 경우에만 URL과 title 조합 수집
     existing_url_title_pairs = set()
     
-    for file_path in other_files:
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            if isinstance(data, dict) and 'news_list' in data:
-                news_list = data['news_list']
-                for item in news_list:
-                    url = item.get('url', '').strip()
-                    title = item.get('title', '').strip()
-                    if url and title:
-                        existing_url_title_pairs.add((url, title))
-        except Exception:
-            continue
+    if other_files:
+        print("\n다른 파일들에서 기존 URL과 title 조합 수집 중...")
+        for file_path in other_files:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                if isinstance(data, dict) and 'news_list' in data:
+                    news_list = data['news_list']
+                    for item in news_list:
+                        url = item.get('url', '').strip()
+                        title = item.get('title', '').strip()
+                        if url and title:
+                            existing_url_title_pairs.add((url, title))
+            except Exception:
+                continue
+        print(f"총 기존 URL-title 조합: {len(existing_url_title_pairs)}개")
+    else:
+        print("\n비교할 다른 파일이 없으므로 중복 필터링을 건너뜁니다.")
     
-    # 3. 최신 파일에서 중복되지 않는 기사만 필터링
+    # 3. 최신 파일에서 기사 필터링
     unique_articles = []
     duplicate_count = 0
+    
+    if other_files:
+        print("\nURL과 title 중복 필터링 중...")
+    else:
+        print("\n전체 기사를 처리 중...")
     
     for item in latest_news_list:
         url = item.get('url', '').strip()
         title = item.get('title', '').strip()
         
         if url and title:
-            current_pair = (url, title)
+            # 비교 파일이 있는 경우에만 중복 체크
+            if other_files:
+                current_pair = (url, title)
+                if current_pair in existing_url_title_pairs:
+                    duplicate_count += 1
+                    continue
             
-            if current_pair not in existing_url_title_pairs:
-                processed_item = {
-                    '제목': title,
-                    'url': url,
-                    '언론사': item.get('source', ''),  # JSON의 source 값
-                    '업로드_날짜': item.get('pub_time', ''),  # JSON의 pub_time 값
-                    '타입': item.get('type', ''),  # JSON의 type 값
-                    '요약': item.get('summary', '')
-                }
-                unique_articles.append(processed_item)
-            else:
-                duplicate_count += 1
+            # 중복이 아니거나 비교 파일이 없는 경우 처리
+            processed_item = {
+                '제목': title,
+                'url': url,
+                '언론사': item.get('source', ''),  # JSON의 source 값
+                '업로드_날짜': item.get('pub_time', ''),  # JSON의 pub_time 값
+                '타입': item.get('type', ''),  # JSON의 type 값
+                '요약': item.get('summary', '')
+            }
+            unique_articles.append(processed_item)
         else:
             duplicate_count += 1
     

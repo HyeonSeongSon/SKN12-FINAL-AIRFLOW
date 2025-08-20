@@ -191,8 +191,8 @@ def collect_recent_news_urls(driver, target_dates=None):
     print("📦 페이지 구조 확인 중...")
     
     try:
-        # main_con 요소 직접 찾기 (기존 크롤러와 동일하게)
-        main_con_xpath = "//*[@id='main_con']/div[1]/div/div[1]/ul"
+        # div[1]을 div[2]로 변경하여 올바른 경로 사용
+        main_con_xpath = "//*[@id='main_con']/div[2]/div/div[1]/ul"
         print(f"📦 뉴스 리스트 검색: {main_con_xpath}")
         
         # main_con 요소 대기 (더 오래)
@@ -204,19 +204,26 @@ def collect_recent_news_urls(driver, target_dates=None):
             print("✅ main_con 발견")
         except Exception as debug_e:
             print(f"❌ main_con 찾기 실패: {debug_e}")
-            # 추가 대기 후 재시도
-            print("⏰ 추가 대기 후 재시도...")
-            time.sleep(10)
+            # 추가 대기 후 재시도 (시간 단축)
+            print("⏰ 5초 후 재시도...")
+            time.sleep(5)
             try:
                 driver.find_element(By.ID, "main_con")
                 print("✅ main_con 재시도 성공")
-            except:
-                print("❌ main_con 재시도도 실패")
+            except Exception as retry_e:
+                print(f"❌ main_con 재시도도 실패: {retry_e}")
+                print("🚫 페이지 구조가 변경되었거나 접근할 수 없습니다. 빈 결과 반환.")
+                return []
         
-        news_list = WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.XPATH, main_con_xpath))
-        )
-        print("✅ 뉴스 리스트 발견")
+        try:
+            news_list = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.XPATH, main_con_xpath))
+            )
+            print("✅ 뉴스 리스트 발견")
+        except Exception as list_e:
+            print(f"❌ 뉴스 리스트 찾기 실패: {list_e}")
+            print("🚫 뉴스 리스트에 접근할 수 없습니다. 빈 결과 반환.")
+            return []
         
         # li 요소들 찾기
         li_elements = news_list.find_elements(By.TAG_NAME, "li")
@@ -314,7 +321,7 @@ def extract_article_date_recent(driver):
     """최근 뉴스 크롤러용 기사에서 업로드 날짜 추출 (직접 XPath 사용)"""
     try:
         # 사용자가 제공한 정확한 XPath 사용
-        date_xpath = "//*[@id='main_con']/div[1]/div/div[1]/div[1]/div[2]/div[2]"
+        date_xpath = "//*[@id='main_con']/div[2]/div/div[1]/div[1]/div[2]/div[2]"
         
         try:
             date_element = WebDriverWait(driver, 3).until(
@@ -335,9 +342,9 @@ def extract_article_date_recent(driver):
         
         # 백업: 다른 가능한 위치들 빠르게 확인
         backup_selectors = [
-            "//*[@id='main_con']/div[1]/div/div[1]/div[2]/div[1]/span",
-            "//*[@id='main_con']/div[1]/div/div[1]/div[2]/div[1]",
-            "//*[@id='main_con']/div[1]/div/div[1]/div[2]/span"
+            "//*[@id='main_con']/div[2]/div/div[1]/div[2]/div[1]/span",
+            "//*[@id='main_con']/div[2]/div/div[1]/div[2]/div[1]",
+            "//*[@id='main_con']/div[2]/div/div[1]/div[2]/span"
         ]
         
         for selector in backup_selectors:
@@ -543,13 +550,16 @@ def crawl_news_detail(driver, news_item, rank):
             news_info['pub_time'] = datetime.now().strftime("%Y.%m.%d %H:%M")
             print("   ⚠️ 날짜 추출 실패, 현재 시간 사용")
         
-        # 제목 추출 (기존 크롤러와 동일)
+        # 제목 추출 - main_con에서 추출하고 첫 줄만 사용
         try:
-            title_xpath = "//*[@id='main_con']/div[1]/div/div[1]/div[1]"
+            title_xpath = "//*[@id='main_con']/div[2]/div/div[1]/div[1]"
             title_element = WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located((By.XPATH, title_xpath))
             )
-            news_info['title'] = title_element.text.strip()
+            full_text = title_element.text.strip()
+            # 첫 번째 줄만 제목으로 사용
+            first_line = full_text.split('\n')[0].strip()
+            news_info['title'] = first_line
             print(f"   ✅ 제목: {news_info['title']}")
         except Exception as e:
             print(f"   ❌ 제목 추출 실패: {e}")
@@ -557,7 +567,7 @@ def crawl_news_detail(driver, news_item, rank):
         
         # 내용 추출 (사용자 요청에 따른 XPath)
         try:
-            content_xpath = "//*[@id='main_con']/div[1]/div/div[1]/div[2]/div[2]"
+            content_xpath = "//*[@id='main_con']/div[2]/div/div[1]/div[2]/div[2]"
             content_element = WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located((By.XPATH, content_xpath))
             )

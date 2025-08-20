@@ -311,6 +311,10 @@ def extract_news_from_iframe(driver, press_name):
                         if not title or not url:
                             continue
                         
+                        # MBC 뉴스의 경우 첫 번째 줄만 제목으로 사용
+                        if press_name == 'MBC' and '\n' in title:
+                            title = title.split('\n')[0].strip()
+                        
                         if len(title) < 5:  # 너무 짧은 제목 제외
                             continue
                         
